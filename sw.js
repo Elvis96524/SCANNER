@@ -1,4 +1,4 @@
-const CACHE = 'scanner-v2';
+const CACHE = 'scanner-v4';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -13,7 +13,7 @@ self.addEventListener('fetch', e => {
   // 行情数据永远走网络，不缓存
   if (url.hostname.includes('financialmodelingprep.com')) return;
   // 页面与 vault.json：网络优先，离线回退缓存
-  if (req.mode === 'navigate' || url.pathname.endsWith('/vault.json')) {
+  if (req.mode === 'navigate' || url.pathname.endsWith('/vault.json') || url.pathname.endsWith('/config.js')) {
     e.respondWith(fetch(req).then(r => {
       if (r.ok) { const cp = r.clone(); caches.open(CACHE).then(c => c.put(req.mode === 'navigate' ? './index.html' : req, cp)); }
       return r;

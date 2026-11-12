@@ -65,7 +65,26 @@
     <input id="lid" class="field" placeholder="ID" autocomplete="username" autocapitalize="none" spellcheck="false">
     <input id="lpw" type="password" class="field" placeholder="密码" autocomplete="current-password">
     <button id="lbtn" class="btn btn-primary w-full" type="submit">进入</button>
+    <button id="lmode" type="button" class="hidden w-full text-center text-xs text-slate-400 hover:text-slate-200 transition"></button>
     <div id="lerr" class="text-center text-sm text-rose-400 min-h-[1.25rem]"></div>
+  </form>
+</section>
+
+<!-- ============ 初始化（仅首次，vault.json 不存在时出现） ============ -->
+<section id="setup" class="hidden min-h-screen flex items-center justify-center p-5">
+  <form id="setupForm" class="glass w-full max-w-sm p-8 space-y-3">
+    <div class="flex flex-col items-center gap-2 pb-3">
+      <img src="icons/icon-192.png" class="w-20 h-20 rounded-3xl shadow-2xl" alt="">
+      <div class="text-2xl font-semibold tracking-tight">scanner</div>
+      <div class="text-[11px] tracking-[.35em] text-slate-500">SETUP</div>
+    </div>
+    <input id="sTok" type="password" class="field" placeholder="FMP API Key" autocomplete="off" spellcheck="false">
+    <input id="sId" class="field" placeholder="管理员 ID" autocapitalize="none" spellcheck="false" autocomplete="username">
+    <input id="sPw" type="password" class="field" placeholder="管理员密码（8 位以上）" autocomplete="new-password">
+    <input id="sGh" type="password" class="field" placeholder="GitHub Token" autocomplete="off" spellcheck="false">
+    <input id="sRepo" class="field" placeholder="owner/repo" autocapitalize="none" spellcheck="false">
+    <button id="sBtn" class="btn btn-primary w-full" type="submit">初始化</button>
+    <div id="sErr" class="text-center text-sm text-rose-400 min-h-[1.25rem]"></div>
   </form>
 </section>
 
@@ -164,7 +183,7 @@
 
 <!-- ============ 设置 ============ -->
 <div id="setModal" class="modal hidden">
-  <div class="glass w-full max-w-sm p-6 space-y-5">
+  <div class="glass w-full max-w-sm max-h-[88vh] overflow-y-auto scrollthin p-6 space-y-5">
     <div class="flex items-center justify-between"><div class="text-lg font-semibold">设置</div><button class="icon-btn" data-close>✕</button></div>
     <div class="flex items-center justify-between text-sm"><span class="text-slate-400">账号</span><b id="whoami">-</b></div>
     <label class="block text-sm">
@@ -176,11 +195,33 @@
       <button id="btnReset" class="btn btn-ghost">用量归零</button>
       <button id="btnLogout" class="btn btn-stop">退出登录</button>
     </div>
+    <button id="btnDiag" class="btn btn-ghost w-full text-sm">测试 API 连接</button>
+    <pre id="diagOut" class="hidden text-xs leading-relaxed whitespace-pre-wrap break-words rounded-xl bg-black/30 p-3 text-slate-300"></pre>
+
+    <details id="admBox" class="hidden rounded-2xl bg-white/5 border border-white/10 px-4 py-3">
+      <summary class="flex items-center justify-between text-sm font-semibold"><span>用户管理</span><span class="text-slate-500">▾</span></summary>
+      <div class="mt-4 space-y-3">
+        <input id="aGh" type="password" class="field text-sm" placeholder="GitHub Token（仅存本设备）" autocomplete="off" spellcheck="false">
+        <input id="aRepo" class="field text-sm" placeholder="owner/repo" autocapitalize="none" spellcheck="false">
+        <button id="btnSaveGh" class="btn btn-ghost w-full text-sm">保存并刷新列表</button>
+        <div id="uList" class="space-y-1.5 text-sm"></div>
+        <div class="grid grid-cols-2 gap-2">
+          <input id="nId" class="field text-sm" placeholder="新 ID" autocapitalize="none" spellcheck="false" autocomplete="off">
+          <input id="nPw" class="field text-sm" placeholder="密码（8 位以上）" spellcheck="false" autocomplete="off">
+        </div>
+        <button id="btnAdd" class="btn btn-violet w-full text-sm">添加用户</button>
+        <div class="grid grid-cols-[1fr_auto] gap-2 pt-1">
+          <input id="nTok" type="password" class="field text-sm" placeholder="新的 FMP API Key" autocomplete="off" spellcheck="false">
+          <button id="btnTok" class="btn btn-ghost text-sm">更新</button>
+        </div>
+      </div>
+    </details>
   </div>
 </div>
 
 <div id="toasts" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none px-4"></div>
 
+<script src="config.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const LS = { cap:'sc_cap', sym:'sc_sym', use:'sc_usage', mode:'sc_mode', lim:'sc_lim' };
@@ -197,27 +238,61 @@ const b64 = buf => { const a = new Uint8Array(buf); let s = ''; for (let i = 0; 
 const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const hex = buf => [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, '0')).join('');
 const normId = id => String(id).trim().toLowerCase();
+const rnd = n => crypto.getRandomValues(new Uint8Array(n));
 async function idHash(id) { return hex(await crypto.subtle.digest('SHA-256', enc.encode('scanner:' + normId(id)))); }
 async function deriveKey(pw, id, saltB64, iter) {
   const base = await crypto.subtle.importKey('raw', enc.encode(pw), 'PBKDF2', false, ['deriveKey']);
   const salt = new Uint8Array([...unb64(saltB64), ...enc.encode(normId(id))]);
   return crypto.subtle.deriveKey({ name:'PBKDF2', salt, iterations:iter, hash:'SHA-256' }, base, { name:'AES-GCM', length:256 }, false, ['encrypt', 'decrypt']);
 }
+const aesKey = (raw, usages) => crypto.subtle.importKey('raw', raw, 'AES-GCM', false, usages);
+async function sealJson(rawKey, obj) {
+  const iv = rnd(12);
+  const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, await aesKey(rawKey, ['encrypt']), enc.encode(JSON.stringify(obj)));
+  return { iv:b64(iv), ct:b64(ct) };
+}
+async function openJson(rawKey, box) {
+  const p = await crypto.subtle.decrypt({ name:'AES-GCM', iv:unb64(box.iv) }, await aesKey(rawKey, ['decrypt']), unb64(box.ct));
+  return JSON.parse(dec.decode(p));
+}
+async function wrapUser(dekRaw, id, pw, iter) {
+  const salt = rnd(16), iv = rnd(12);
+  const key = await deriveKey(pw, id, b64(salt), iter);
+  const w = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, dekRaw);
+  return { h:await idHash(id), s:b64(salt), iv:b64(iv), w:b64(w), n:await sealJson(dekRaw, normId(id)) };
+}
+async function makeVault(token, limit, adminId, users, iter = 250000) {
+  const dek = rnd(32);
+  const out = { v:2, iter, users:[], data:await sealJson(dek, { token, limit, admin:normId(adminId) }) };
+  for (const u of users) out.users.push(await wrapUser(dek, u.id, u.pw, iter));
+  return out;
+}
 async function openVault(vault, id, pw) {
   const h = await idHash(id);
   const u = (vault.users || []).find(x => x.h === h);
   if (!u) throw new Error('bad');
   const key = await deriveKey(pw, id, u.s, vault.iter);
-  const dekRaw = await crypto.subtle.decrypt({ name:'AES-GCM', iv:unb64(u.iv) }, key, unb64(u.w));
-  const dek = await crypto.subtle.importKey('raw', dekRaw, 'AES-GCM', false, ['decrypt']);
-  const plain = await crypto.subtle.decrypt({ name:'AES-GCM', iv:unb64(vault.data.iv) }, dek, unb64(vault.data.ct));
-  return JSON.parse(dec.decode(plain));
+  const dek = await crypto.subtle.decrypt({ name:'AES-GCM', iv:unb64(u.iv) }, key, unb64(u.w));
+  return { data:await openJson(dek, vault.data), dek };
 }
 /*CRYPTO-END*/
 
-/* ---------- 登录 ---------- */
+/* ---------- 登录 / 初始化 ---------- */
 let fails = 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const show = id => { ['login', 'setup', 'app'].forEach(x => $(x).classList.toggle('hidden', x !== id)); };
+function guessRepo() {
+  const h = location.hostname;
+  if (h.endsWith('.github.io')) { const o = h.split('.')[0]; return o + '/' + (location.pathname.split('/')[1] || (o + '.github.io')); }
+  return localStorage.getItem('sc_repo') || '';
+}
+function showSetup() { $('sRepo').value = guessRepo(); show('setup'); }
+function startSession(id, data, dek) {
+  const isAdmin = data.admin === normId(id);
+  const sess = { user:normId(id), token:data.token, limit:data.limit || 250, admin:isAdmin, dek:isAdmin ? b64(dek) : '' };
+  sessionStorage.setItem(SS, JSON.stringify(sess));
+  enter(sess);
+}
 $('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   const id = $('lid').value, pw = $('lpw').value, btn = $('lbtn'), err = $('lerr');
@@ -227,33 +302,51 @@ $('loginForm').addEventListener('submit', async e => {
     let vault;
     try {
       const r = await fetch('vault.json', { cache:'no-store' });
-      if (!r.ok) throw new Error('nov');
+      if (r.status === 404) { showSetup(); return; }
+      if (!r.ok) throw new Error('x');
       vault = await r.json();
-    } catch (x) { err.textContent = '未找到 vault.json（请先用 admin.html 生成并上传）'; return; }
+    } catch (x) { err.textContent = '网络异常，请稍后再试'; return; }
     try {
-      const data = await openVault(vault, id, pw);
-      fails = 0;
-      const sess = { user:normId(id), token:data.token, limit:data.limit || 250 };
-      sessionStorage.setItem(SS, JSON.stringify(sess));
-      enter(sess);
+      const { data, dek } = await openVault(vault, id, pw);
+      fails = 0; startSession(id, data, dek);
     } catch (x) {
       fails++; await sleep(Math.min(4000, 500 * fails));
       err.textContent = 'ID 或密码错误';
     }
   } finally { btn.disabled = false; btn.textContent = '进入'; }
 });
+$('setupForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const tok = $('sTok').value.trim(), id = $('sId').value.trim(), pw = $('sPw').value, gh = $('sGh').value.trim(), repo = $('sRepo').value.trim();
+  const btn = $('sBtn'), err = $('sErr'); err.textContent = '';
+  if (!tok || !id || !gh || !/^[\w.-]+\/[\w.-]+$/.test(repo)) { err.textContent = '请填写完整（仓库格式 owner/repo）'; return; }
+  if (pw.length < 8) { err.textContent = '密码至少 8 位'; return; }
+  btn.disabled = true; btn.textContent = '初始化中…';
+  try {
+    localStorage.setItem('sc_gh', gh); localStorage.setItem('sc_repo', repo);
+    const vault = await makeVault(tok, 250, id, [{ id, pw }]);
+    await ghWrite(vault, null, 'init vault');
+    const { data, dek } = await openVault(vault, id, pw);
+    startSession(id, data, dek);
+    toast('初始化完成，约 1 分钟后其他设备可登录', 4500);
+  } catch (x) { err.textContent = x.message; }
+  finally { btn.disabled = false; btn.textContent = '初始化'; }
+});
 
 function enter(sess) {
   Object.assign(S, sess);
-  $('login').classList.add('hidden');
-  $('app').classList.remove('hidden');
+  S.dek = sess.dek ? unb64(sess.dek) : null;
+  show('app');
   $('lpw').value = '';
   $('whoami').textContent = S.user;
+  $('admBox').classList.toggle('hidden', !S.admin);
+  $('aGh').value = localStorage.getItem('sc_gh') || '';
+  $('aRepo').value = localStorage.getItem('sc_repo') || guessRepo();
   initApp();
 }
 $('btnLogout').addEventListener('click', () => { sessionStorage.removeItem(SS); location.reload(); });
 
-/* ---------- 基础设置 ---------- */
+/* ---------- 基础设置 ---------- *//* ---------- 基础设置 ---------- */
 const getCap = () => Math.max(1, parseFloat($('capital').value) || 500);
 const parseSyms = () => [...new Set($('symbols').value.toUpperCase().split(/[\s,;，；]+/).map(s => s.replace(/[^A-Z0-9.\-]/g, '')).filter(Boolean))];
 const setSyms = arr => { $('symbols').value = arr.join(', '); saveSyms(); };
@@ -293,32 +386,39 @@ function renderUsage() {
 }
 function refreshSettings() { $('limInput').value = limit(); renderUsage(); }
 $('limInput').addEventListener('change', e => { const v = parseInt(e.target.value); if (v > 0) localStorage.setItem(LS.lim, v); renderUsage(); });
+$('btnDiag').addEventListener('click', diag);
 $('btnReset').addEventListener('click', () => { localStorage.setItem(LS.use, JSON.stringify({ d:dayKey(), n:0 })); renderUsage(); toast('用量已归零'); });
 
-/* ---------- FMP 请求（记住可用端点，减少浪费额度） ---------- */
+/* ---------- FMP 请求（stable 优先；旧 v3 仅作回退；显示真实错误） ---------- */
 const B3 = 'https://financialmodelingprep.com/api/v3', BS = 'https://financialmodelingprep.com/stable';
+const K_MODE = 'sc_mode2', K_NB = 'sc_nobatch';
 const EP = {
-  v3:     { gainers: () => `${B3}/stock_market/gainers`, actives: () => `${B3}/stock_market/actives`, quote: s => `${B3}/quote/${s}` },
-  stable: { gainers: () => `${BS}/biggest-gainers`,      actives: () => `${BS}/most-actives`,        quote: s => `${BS}/batch-quote?symbols=${s}` }
+  stable: { gainers: () => `${BS}/biggest-gainers`, actives: () => `${BS}/most-actives`, quote: s => `${BS}/batch-quote?symbols=${s}` },
+  v3:     { gainers: () => `${B3}/stock_market/gainers`, actives: () => `${B3}/stock_market/actives`, quote: s => `${B3}/quote/${s}` }
 };
 let lastErr = '';
+const noteErr = (tag, m) => { lastErr = (lastErr ? lastErr + ' ｜ ' : '') + tag + ' ' + m; };
 async function getJson(url) {
   bump();
   const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'apikey=' + encodeURIComponent(S.token));
+  let body = null, raw = '';
+  try { raw = await r.text(); body = JSON.parse(raw); } catch (e) {}
+  const msg = body && !Array.isArray(body) ? (body['Error Message'] || body.error || body.message || '') : '';
   if (r.status === 429) { localStorage.setItem(LS.use, JSON.stringify({ d:dayKey(), n:Math.max(usage().n, limit()) })); renderUsage(); throw new Error('API 额度已用完 (429)'); }
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  const j = await r.json();
-  if (j && !Array.isArray(j) && (j['Error Message'] || j.error || j.message)) throw new Error(j['Error Message'] || j.error || j.message);
-  return Array.isArray(j) ? j : [];
+  if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + String(msg || raw).replace(/\s+/g, ' ').slice(0, 110));
+  if (msg) throw new Error(String(msg).slice(0, 110));
+  return Array.isArray(body) ? body : [];
 }
 async function api(kind, arg) {
-  const first = localStorage.getItem(LS.mode) === 'stable' ? 'stable' : 'v3';
-  const order = [first, first === 'v3' ? 'stable' : 'v3'];
+  if (!S.token) { noteErr('', 'API Key 为空，请让管理员在 ⚙ 用户管理里更新 Key'); return []; }
+  const first = localStorage.getItem(K_MODE) === 'v3' ? 'v3' : 'stable';
+  const order = [first, first === 'stable' ? 'v3' : 'stable'];
   for (const m of order) {
     try {
       const d = await getJson(EP[m][kind](arg));
-      if (d.length) { localStorage.setItem(LS.mode, m); return d; }
-    } catch (e) { lastErr = e.message; if (/429/.test(e.message)) break; }
+      if (d.length) { localStorage.setItem(K_MODE, m); return d; }
+      noteErr(m + '/' + kind, '返回空');
+    } catch (e) { noteErr(m + '/' + kind, e.message); if (/429/.test(e.message)) break; }
   }
   return [];
 }
@@ -329,13 +429,41 @@ function normQ(q) {
     chg: +(q.changesPercentage ?? q.changePercentage ?? 0)
   };
 }
+/* 免费版常不支持 batch-quote：自动改为逐只 quote?symbol=（每只 1 次请求，耗额度） */
 async function getQuotes(symbols) {
   const out = [];
-  for (let i = 0; i < symbols.length; i += 40) {
-    const d = await api('quote', symbols.slice(i, i + 40).join(','));
-    out.push(...d.map(normQ));
+  if (localStorage.getItem(K_NB) !== '1') {
+    for (let i = 0; i < symbols.length; i += 40) {
+      const d = await api('quote', symbols.slice(i, i + 40).join(','));
+      out.push(...d.map(normQ));
+    }
+    if (out.length) return out;
   }
-  return out;
+  const res = await Promise.all(symbols.map(async sym => {
+    try { const d = await getJson(`${BS}/quote?symbol=${encodeURIComponent(sym)}`); return d[0] ? normQ(d[0]) : null; }
+    catch (e) { if (!/HTTP 4(00|04)/.test(e.message)) noteErr('quote/' + sym, e.message); return null; }
+  }));
+  const ok = res.filter(Boolean);
+  if (ok.length && localStorage.getItem(K_NB) !== '1') { localStorage.setItem(K_NB, '1'); toast('当前套餐不支持批量报价，已改为逐只请求（每次刷新消耗 ' + symbols.length + ' 次 API）', 6000); }
+  return ok;
+}
+
+/* ---------- 连接诊断 ---------- */
+async function diag() {
+  const out = $('diagOut'); out.classList.remove('hidden');
+  if (!S.token) { out.textContent = '❌ API Key 为空'; return; }
+  const tests = [
+    ['stable 单个报价', `${BS}/quote?symbol=AAPL`],
+    ['stable 批量报价', `${BS}/batch-quote?symbols=AAPL,MSFT`],
+    ['stable 涨幅榜', `${BS}/biggest-gainers`],
+    ['v3 批量报价(旧)', `${B3}/quote/AAPL,MSFT`]
+  ];
+  const lines = []; out.textContent = '测试中…';
+  for (const [n, u] of tests) {
+    try { const d = await getJson(u); lines.push(`${d.length ? '✅' : '⚠️'} ${n}：${d.length} 条`); }
+    catch (e) { lines.push(`❌ ${n}：${e.message}`); }
+    out.textContent = lines.join('\n');
+  }
 }
 
 /* ---------- 一键选股 ---------- */
@@ -345,7 +473,8 @@ async function fetchTop20() {
   try {
     btn.textContent = '⏳ 1/3 榜单…';
     const [g, a] = await Promise.all([api('gainers'), api('actives')]);
-    const cand = [...new Set([...g, ...a].map(x => (x.symbol || x.ticker || '').toUpperCase()).filter(s => /^[A-Z]{1,5}$/.test(s)))];
+    const cand = [...new Set([...g, ...a].filter(x => { const pr = +x.price; return !pr || (pr >= 2 && pr <= 60); }).map(x => (x.symbol || x.ticker || '').toUpperCase()).filter(s => /^[A-Z]{1,5}$/.test(s)))]
+      .slice(0, localStorage.getItem(K_NB) === '1' ? 25 : 80);
     if (!cand.length) throw new Error(lastErr || '榜单无数据（检查套餐权限）');
     btn.textContent = `⏳ 2/3 快照 ${cand.length}…`;
     const quotes = await getQuotes(cand);
@@ -525,6 +654,75 @@ $('cards').addEventListener('click', async e => {
   }
 });
 
+/* ---------- 用户管理（通过 GitHub Contents API 提交 vault.json） ---------- */
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+const ghCfg = () => ({ gh:localStorage.getItem('sc_gh') || '', repo:localStorage.getItem('sc_repo') || '' });
+const ghHdr = gh => ({ Authorization:'Bearer ' + gh, Accept:'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28' });
+async function ghRead() {
+  const { gh, repo } = ghCfg();
+  if (!gh || !repo) throw new Error('请先填写 GitHub Token 和仓库');
+  const r = await fetch(`https://api.github.com/repos/${repo}/contents/vault.json`, { headers:ghHdr(gh), cache:'no-store' });
+  if (!r.ok) throw new Error('读取失败 HTTP ' + r.status + (r.status === 401 || r.status === 403 || r.status === 404 ? '（检查 Token 权限与仓库名）' : ''));
+  const j = await r.json();
+  return { sha:j.sha, vault:JSON.parse(dec.decode(unb64(j.content.replace(/\s/g, '')))) };
+}
+async function ghWrite(vault, sha, msg) {
+  const { gh, repo } = ghCfg();
+  const r = await fetch(`https://api.github.com/repos/${repo}/contents/vault.json`, {
+    method:'PUT', headers:{ ...ghHdr(gh), 'Content-Type':'application/json' },
+    body:JSON.stringify({ message:msg, content:btoa(JSON.stringify(vault)), ...(sha ? { sha } : {}) })
+  });
+  if (!r.ok) {
+    let m = ''; try { m = (await r.json()).message; } catch (e) {}
+    throw new Error('提交失败 HTTP ' + r.status + (m ? ' · ' + m : ''));
+  }
+}
+async function loadUsers() {
+  const box = $('uList'); box.textContent = '…';
+  try {
+    const { vault } = await ghRead();
+    const rows = [];
+    for (const u of vault.users) { let n = '(旧账号)'; try { if (u.n) n = await openJson(S.dek, u.n); } catch (e) {} rows.push({ h:u.h, n }); }
+    box.innerHTML = rows.map(x => `<div class="flex items-center justify-between rounded-xl bg-black/25 px-3 py-2"><span>${esc(x.n)}${x.n === S.user ? ' <span class="text-[11px] text-violet-300">管理员</span>' : ''}</span>${x.n === S.user ? '' : `<button data-del="${x.h}" class="text-slate-500 hover:text-rose-400 px-1">✕</button>`}</div>`).join('');
+  } catch (e) { box.textContent = ''; toast(e.message, 4500); }
+}
+async function adminAction(btn, fn, okMsg) {
+  const t = btn.textContent; btn.disabled = true; btn.textContent = '…';
+  try { await fn(); toast(okMsg, 3500); await loadUsers(); }
+  catch (e) { toast(e.message, 4500); }
+  finally { btn.disabled = false; btn.textContent = t; }
+}
+$('admBox').addEventListener('toggle', e => { if (e.target.open) loadUsers(); });
+$('btnSaveGh').addEventListener('click', () => {
+  localStorage.setItem('sc_gh', $('aGh').value.trim()); localStorage.setItem('sc_repo', $('aRepo').value.trim()); loadUsers();
+});
+$('btnAdd').addEventListener('click', () => adminAction($('btnAdd'), async () => {
+  const id = $('nId').value.trim(), pw = $('nPw').value;
+  if (!id || pw.length < 8) throw new Error('请填写 ID，密码至少 8 位');
+  const { vault, sha } = await ghRead();
+  const h = await idHash(id);
+  if (vault.users.some(u => u.h === h)) throw new Error('该 ID 已存在');
+  vault.users.push(await wrapUser(S.dek, id, pw, vault.iter));
+  await ghWrite(vault, sha, 'add user');
+  $('nId').value = ''; $('nPw').value = '';
+}, '已添加，约 1 分钟后生效'));
+$('uList').addEventListener('click', e => {
+  const b = e.target.closest('[data-del]'); if (!b || !confirm('删除该用户？')) return;
+  adminAction(b, async () => {
+    const { vault, sha } = await ghRead();
+    vault.users = vault.users.filter(u => u.h !== b.dataset.del);
+    await ghWrite(vault, sha, 'remove user');
+  }, '已删除，约 1 分钟后生效');
+});
+$('btnTok').addEventListener('click', () => adminAction($('btnTok'), async () => {
+  const t = $('nTok').value.trim(); if (!t) throw new Error('请输入新的 API Key');
+  const { vault, sha } = await ghRead();
+  vault.data = await sealJson(S.dek, { token:t, limit:S.limit, admin:S.user });
+  await ghWrite(vault, sha, 'update key');
+  S.token = t; const ss = JSON.parse(sessionStorage.getItem(SS) || '{}'); ss.token = t; sessionStorage.setItem(SS, JSON.stringify(ss));
+  $('nTok').value = '';
+}, 'API Key 已更新，约 1 分钟后生效'));
+
 /* ---------- 初始化 ---------- */
 let inited = false;
 function initApp() {
@@ -545,16 +743,19 @@ function initApp() {
   renderUsage(); tickClock(); setInterval(tickClock, 1000);
 }
 
-(function boot() {
+(async function boot() {
   try {
-    const s = JSON.parse(sessionStorage.getItem(SS));
-    if (s && s.token) { enter(s); return; }
+    const sv = JSON.parse(sessionStorage.getItem(SS));
+    if (sv && sv.token) { enter(sv); return; }
   } catch (e) {}
-  $('login').classList.remove('hidden');
-  $('lid').focus();
+  try {
+    const r = await fetch('vault.json', { cache:'no-store' });
+    if (r.status === 404) { showSetup(); return; }
+  } catch (e) {}
+  show('login'); $('lid').focus();
 })();
 
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator)if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
 </script>

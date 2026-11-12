@@ -9,6 +9,13 @@
 
 > API Key 在 `vault.json` 里是 AES-256-GCM 加密的，只有输入正确 ID/密码才能解出，源码和仓库里都看不到明文。
 
+## 一（附）、用 GitHub Fine-grained Token 登录（可选，权限由 GitHub 控制）
+1. 新建一个**私有**仓库（如 `scanner-secret`），根目录放 `config.json`：`{"token":"你的FMP API Key","limit":250}`
+2. GitHub → Settings → Developer settings → Fine-grained tokens，给每个人各生成一个：
+   Repository access 只选 `scanner-secret`；Permissions → Contents 选 **Read-only**；设置到期日。
+3. 编辑本项目的 `config.js`，把 `ghRepo` 改成 `用户名/scanner-secret`（`defaultMode` 设为 `'token'` 可默认显示 Token 登录）。
+4. 把 Token 发给要用的人；登录页点「改用 GitHub Token 登录」。要停用某人，在 GitHub 删掉他的 Token 即可，立刻失效。
+
 ## 二、部署到 GitHub Pages
 1. 把本目录所有文件（含 `.nojekyll`、`vault.json`）推到仓库根目录。
 2. Settings → Pages → Branch 选 `main` / `(root)`。
