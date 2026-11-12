@@ -412,7 +412,7 @@ async function getJson(url) {
 async function api(kind, arg) {
   if (!S.token) { noteErr('', 'API Key 为空，请让管理员在 ⚙ 用户管理里更新 Key'); return []; }
   const first = localStorage.getItem(K_MODE) === 'v3' ? 'v3' : 'stable';
-  const order = [first, first === 'stable' ? 'v3' : 'stable'];
+  const order = first === 'v3' ? ['v3', 'stable'] : ['stable'];  // v3 已停用，不再浪费请求
   for (const m of order) {
     try {
       const d = await getJson(EP[m][kind](arg));
@@ -439,6 +439,8 @@ async function getQuotes(symbols) {
     }
     if (out.length) return out;
   }
+  if (/402|Restricted|subscription/i.test(lastErr)) localStorage.setItem(K_NB, '1');
+  if (symbols.length > 25) symbols = symbols.slice(0, 25);  // 逐只模式限制数量，避免烧光额度
   const res = await Promise.all(symbols.map(async sym => {
     try { const d = await getJson(`${BS}/quote?symbol=${encodeURIComponent(sym)}`); return d[0] ? normQ(d[0]) : null; }
     catch (e) { if (!/HTTP 4(00|04)/.test(e.message)) noteErr('quote/' + sym, e.message); return null; }
@@ -461,7 +463,7 @@ async function diag() {
   const lines = []; out.textContent = '测试中…';
   for (const [n, u] of tests) {
     try { const d = await getJson(u); lines.push(`${d.length ? '✅' : '⚠️'} ${n}：${d.length} 条`); }
-    catch (e) { lines.push(`❌ ${n}：${e.message}`); }
+    catch (e) { lines.push(`❌ ${n}：${e.message}`); if (/批量/.test(n) && /stable/.test(n) && /402/.test(e.message)) { localStorage.setItem(K_NB, '1'); lines.push('→ 已切换为省流模式'); } }
     out.textContent = lines.join('\n');
   }
 }
@@ -559,13 +561,45 @@ function setLive(on, txt) {
   $('liveDot').className = 'w-2 h-2 rounded-full ' + (on ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600');
   $('liveTxt').textContent = txt;
 }
+let openCache = {}, seenPx = {}, tickN = 0, rrN = 0, busy = false;
+const freeMode = () => localStorage.getItem(K_NB) === '1';
+async function quoteOne(sym) {
+  const d = await getJson(`${BS}/quote?symbol=${encodeURIComponent(sym)}`);
+  return d[0] ? normQ(d[0]) : null;
+}
+/* 省流模式（免费版）：开盘价每只只查 1 次；之后每轮 1 次涨幅榜 + 隔轮轮询 1 只；仅在 09:30–09:46 ET 工作 */
+async function fetchRows(syms) {
+  const p = etParts(), t = p.h * 60 + p.m;
+  if (t < 570) { setLive(true, '等待开盘 09:30 ET'); return null; }
+  if (t > 586) { setLive(true, '窗口已结束，未消耗额度'); return null; }
+  const need = syms.filter(s => !openCache[s]);
+  if (need.length) {
+    setLive(true, `读取开盘价 ${need.length}`);
+    await Promise.all(need.map(async s => {
+      try { const q = await quoteOne(s); if (q && q.open > 0) { openCache[s] = q.open; seenPx[s] = q.price; } } catch (e) { noteErr('quote/' + s, e.message); }
+    }));
+  }
+  tickN++;
+  const g = await api('gainers');
+  const inG = new Set();
+  g.forEach(x => { const sy = (x.symbol || '').toUpperCase(); if (syms.includes(sy) && +x.price > 0) { seenPx[sy] = +x.price; inG.add(sy); } });
+  if (tickN % 2 === 0) {
+    const stale = syms.filter(s => openCache[s] && !inG.has(s));
+    if (stale.length) { const s = stale[rrN++ % stale.length]; try { const q = await quoteOne(s); if (q) seenPx[s] = q.price; } catch (e) { noteErr('quote/' + s, e.message); } }
+  }
+  return syms.filter(s => openCache[s] && seenPx[s]).map(s => ({ symbol:s, open:openCache[s], price:seenPx[s], volume:0, avgVolume:0, marketCap:0, chg:0 }));
+}
 async function poll() {
+  if (busy) return;
   const syms = parseSyms();
   if (!syms.length) return;
   if (usage().n >= limit()) { stopRadar(); toast('今日 API 额度已用完，雷达已停止', 5000); return; }
+  busy = true;
   try {
     lastErr = '';
-    const quotes = await getQuotes(syms);
+    let quotes;
+    if (freeMode()) { quotes = await fetchRows(syms); if (!quotes) return; }
+    else quotes = await getQuotes(syms);
     if (!quotes.length) throw new Error(lastErr || '无数据');
     const rows = quotes.map(q => {
       const surge = q.open > 0 ? ((q.price - q.open) / q.open) * 100 : 0;
@@ -583,14 +617,16 @@ async function poll() {
   } catch (e) {
     setLive(true, '刷新失败');
     if (timer) toast('刷新失败：' + e.message, 3000);
-  }
+  } finally { busy = false; }
 }
 function startRadar() {
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
-  lastPrice = {}; lastTier = {};
+  lastPrice = {}; lastTier = {}; openCache = {}; seenPx = {}; tickN = 0; rrN = 0;
   const b = $('btnRadar'); b.textContent = '■ 停止雷达'; b.className = 'btn btn-stop text-base';
   setLive(true, '连接中');
-  poll(); timer = setInterval(poll, 3000);
+  const ms = freeMode() ? 8000 : 3000;
+  if (freeMode()) toast('省流模式：每 8 秒刷新，仅 09:30–09:46 ET 消耗额度', 5000);
+  poll(); timer = setInterval(poll, ms);
 }
 function stopRadar() {
   if (timer) clearInterval(timer); timer = null;
