@@ -1,4 +1,4 @@
-const CACHE = 'scanner-v1';
+const CACHE = 'scanner-v2';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -12,10 +12,12 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   // 行情数据永远走网络，不缓存
   if (url.hostname.includes('financialmodelingprep.com')) return;
-  // 页面：网络优先，离线回退缓存
-  if (req.mode === 'navigate') {
-    e.respondWith(fetch(req).then(r => { const cp = r.clone(); caches.open(CACHE).then(c => c.put('./index.html', cp)); return r; })
-      .catch(() => caches.match('./index.html')));
+  // 页面与 vault.json：网络优先，离线回退缓存
+  if (req.mode === 'navigate' || url.pathname.endsWith('/vault.json')) {
+    e.respondWith(fetch(req).then(r => {
+      if (r.ok) { const cp = r.clone(); caches.open(CACHE).then(c => c.put(req.mode === 'navigate' ? './index.html' : req, cp)); }
+      return r;
+    }).catch(() => caches.match(req.mode === 'navigate' ? './index.html' : req)));
     return;
   }
   // 静态资源（含 Tailwind CDN）：缓存优先

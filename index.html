@@ -2,10 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>scanner</title>
-<meta name="theme-color" content="#0b0e14">
-<meta name="description" content="每日美股 Top 20 爆发小盘股筛选与开盘狙击雷达">
+<meta name="theme-color" content="#07080d">
+<meta name="description" content="scanner">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -15,182 +15,356 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  body { background:#0b0e14; color:#d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  .panel { background:#121722; border:1px solid #1f2937; border-radius:10px; }
-  @keyframes flashGreen { 0%,100%{ box-shadow:0 0 0 0 rgba(34,197,94,.0); background:#0f2a1c; } 50%{ box-shadow:0 0 18px 3px rgba(34,197,94,.75); background:#14532d; } }
-  .flash { animation: flashGreen .9s infinite; border-color:#22c55e !important; }
-  input, textarea { background:#0b0e14; border:1px solid #243041; border-radius:6px; padding:6px 10px; color:#e5e7eb; outline:none; }
-  input:focus, textarea:focus { border-color:#38bdf8; }
-  .btn { padding:8px 14px; border-radius:8px; font-weight:700; cursor:pointer; transition:.15s; }
-  .btn:hover { filter:brightness(1.15); }
+  body { background:#07080d; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .aurora { position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background:
+      radial-gradient(60rem 40rem at 8% -10%, rgba(124,58,237,.30), transparent 60%),
+      radial-gradient(50rem 36rem at 100% 0%, rgba(6,182,212,.22), transparent 60%),
+      radial-gradient(44rem 30rem at 50% 115%, rgba(16,185,129,.20), transparent 60%); }
+  .glass { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.09); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); border-radius:20px; }
   .num { font-variant-numeric: tabular-nums; }
-  .copybox { background:#0b0e14; border:1px solid #243041; border-radius:6px; padding:4px 8px; }
+  .field { width:100%; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:12px 14px; color:#f1f5f9; outline:none; transition:.15s; }
+  .field:focus { border-color:rgba(167,139,250,.8); background:rgba(255,255,255,.09); }
+  .btn { border-radius:14px; padding:11px 18px; font-weight:700; cursor:pointer; transition:.15s; user-select:none; }
+  .btn:active { transform:scale(.97); }
+  .btn:disabled { opacity:.6; cursor:wait; }
+  .btn-primary { background:linear-gradient(135deg,#bef264,#34d399 60%,#22d3ee); color:#04130c; box-shadow:0 8px 28px -8px rgba(52,211,153,.6); }
+  .btn-primary:hover { filter:brightness(1.08); }
+  .btn-violet { background:linear-gradient(135deg,#a78bfa,#6366f1); color:#fff; box-shadow:0 8px 28px -8px rgba(129,140,248,.6); }
+  .btn-stop { background:linear-gradient(135deg,#fb7185,#e11d48); color:#fff; }
+  .btn-ghost { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); color:#e2e8f0; }
+  .btn-ghost:hover { background:rgba(255,255,255,.12); }
+  .icon-btn { width:40px; height:40px; display:grid; place-items:center; border-radius:12px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); cursor:pointer; transition:.15s; font-size:16px; }
+  .icon-btn:hover { background:rgba(255,255,255,.13); }
+  .chip { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); }
+  .chip input { background:transparent; border:0; outline:0; width:72px; color:#f8fafc; font-weight:700; }
+  @keyframes glow { 0%,100% { box-shadow:0 0 0 0 rgba(52,211,153,0); } 50% { box-shadow:0 0 34px 2px rgba(52,211,153,.55); } }
+  .t-sniper { border-color:rgba(52,211,153,.75) !important; animation:glow 1s infinite; background:rgba(16,185,129,.10); }
+  .t-sprint { border-color:rgba(251,146,60,.6) !important; }
+  .t-aim { border-color:rgba(250,204,21,.5) !important; }
+  .valbtn { text-align:left; background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.07); border-radius:12px; padding:8px 10px; cursor:pointer; transition:.15s; }
+  .valbtn:hover { border-color:rgba(255,255,255,.28); }
+  details > summary { list-style:none; cursor:pointer; }
+  details > summary::-webkit-details-marker { display:none; }
+  .modal { position:fixed; inset:0; z-index:40; display:flex; align-items:flex-end; justify-content:center; padding:16px; background:rgba(3,4,8,.72); backdrop-filter:blur(6px); }
+  @media (min-width:640px){ .modal { align-items:center; } }
+  .hidden { display:none !important; }
+  .scrollthin::-webkit-scrollbar { width:6px; } .scrollthin::-webkit-scrollbar-thumb { background:rgba(255,255,255,.15); border-radius:6px; }
 </style>
 </head>
-<body class="min-h-screen p-4">
-<div class="max-w-7xl mx-auto space-y-4">
+<body class="min-h-screen text-slate-200 antialiased">
+<div class="aurora"></div>
 
-  <!-- 状态栏 -->
-  <div class="panel p-4 flex flex-wrap items-center justify-between gap-3">
+<!-- ============ 登录 ============ -->
+<section id="login" class="hidden min-h-screen flex items-center justify-center p-5">
+  <form id="loginForm" class="glass w-full max-w-sm p-8 space-y-4">
+    <div class="flex flex-col items-center gap-3 pb-2">
+      <img src="icons/icon-192.png" class="w-20 h-20 rounded-3xl shadow-2xl" alt="">
+      <div class="text-2xl font-semibold tracking-tight">scanner</div>
+    </div>
+    <input id="lid" class="field" placeholder="ID" autocomplete="username" autocapitalize="none" spellcheck="false">
+    <input id="lpw" type="password" class="field" placeholder="密码" autocomplete="current-password">
+    <button id="lbtn" class="btn btn-primary w-full" type="submit">进入</button>
+    <div id="lerr" class="text-center text-sm text-rose-400 min-h-[1.25rem]"></div>
+  </form>
+</section>
+
+<!-- ============ 主界面 ============ -->
+<main id="app" class="hidden max-w-7xl mx-auto p-4 sm:p-6 space-y-5">
+
+  <header class="flex flex-wrap items-center gap-3">
+    <div class="flex items-center gap-3 mr-auto">
+      <img src="icons/icon-192.png" class="w-10 h-10 rounded-xl" alt="">
+      <div class="text-xl font-semibold tracking-tight">scanner</div>
+    </div>
+    <button id="useChip" class="chip hover:bg-white/10 transition" title="API 今日用量">
+      <span class="text-[11px] text-slate-400 tracking-widest">API</span>
+      <span id="useTxt" class="font-bold num">0/250</span>
+      <span class="w-14 h-1.5 rounded-full bg-white/10 overflow-hidden"><span id="useBar" class="block h-full rounded-full bg-emerald-400" style="width:0%"></span></span>
+    </button>
+    <button id="btnTest" class="icon-btn" title="测试声音与卡片">🔊</button>
+    <button id="btnHelp" class="icon-btn" title="说明">ⓘ</button>
+    <button id="btnSet" class="icon-btn" title="设置">⚙</button>
+  </header>
+
+  <!-- 时钟 + 阶段 -->
+  <section class="glass p-5 flex flex-wrap items-center gap-x-8 gap-y-3">
     <div>
-      <div class="text-xs text-gray-500">美东时间 (America/New_York)</div>
-      <div id="etClock" class="text-3xl font-bold text-sky-400 num">--:--:--</div>
+      <div id="etClock" class="text-4xl sm:text-5xl font-semibold tracking-tight num bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">--:--:--</div>
+      <div class="text-[11px] tracking-[.25em] text-slate-500 mt-1">NEW YORK</div>
     </div>
-    <div id="phaseBox" class="flex-1 min-w-[260px] px-4 py-2 rounded-lg bg-gray-800 text-gray-300 font-bold text-sm">--</div>
-    <button id="btnTest" class="btn bg-gray-700 text-gray-100">🔊 测试声音与卡片效果</button>
-  </div>
+    <div id="phasePill" class="flex items-center gap-3 px-5 py-3 rounded-2xl bg-white/5 border border-white/10">
+      <span id="phaseDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+      <span id="phaseName" class="font-semibold">--</span>
+      <span id="phaseCd" class="text-sm text-slate-400 num"></span>
+    </div>
+    <div class="ml-auto flex items-center gap-2 text-sm text-slate-400">
+      <span id="liveDot" class="w-2 h-2 rounded-full bg-slate-600"></span><span id="liveTxt" class="num">待机</span>
+    </div>
+  </section>
 
-  <!-- 设置 -->
-  <div class="panel p-4 space-y-3">
-    <div class="flex flex-wrap gap-4 items-end">
-      <label class="flex flex-col text-xs text-gray-400">FMP API Key
-        <input id="apiKey" type="password" class="w-72 mt-1" placeholder="粘贴你的 FMP API Key">
-      </label>
-      <label class="flex flex-col text-xs text-gray-400">单笔投入本金 ($)
-        <input id="capital" type="number" min="1" value="500" class="w-32 mt-1">
-      </label>
-      <button id="btnFetch" class="btn bg-amber-500 text-black text-base">⚡ 一键抓取今日 Top 20 爆发小盘股</button>
-    </div>
-    <div id="fetchLog" class="text-xs text-gray-500 whitespace-pre-line min-h-[1.5em]"></div>
+  <!-- 操作 -->
+  <section class="flex flex-wrap items-center gap-3">
+    <button id="btnFetch" class="btn btn-primary text-base">⚡ 抓取今日 Top 20</button>
+    <button id="btnRadar" class="btn btn-violet text-base">▶ 开始雷达</button>
+    <label class="chip"><span class="text-slate-400">$</span><input id="capital" type="number" min="1" inputmode="decimal" value="500"></label>
+  </section>
+
+  <details id="listBox" class="glass px-5 py-3">
+    <summary class="flex items-center justify-between text-sm text-slate-300">
+      <span>监控名单 <span id="symCount" class="ml-1 px-2 py-0.5 rounded-full bg-white/10 text-xs num">0</span></span>
+      <span class="text-slate-500">▾</span>
+    </summary>
+    <textarea id="symbols" rows="3" class="field mt-3 text-sm" spellcheck="false"></textarea>
+  </details>
+
+  <section>
+    <div id="cards" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+  </section>
+</main>
+
+<!-- ============ 说明 ============ -->
+<div id="helpModal" class="modal hidden">
+  <div class="glass w-full max-w-lg max-h-[85vh] overflow-y-auto scrollthin p-6 space-y-5 text-sm leading-relaxed">
+    <div class="flex items-center justify-between"><div class="text-lg font-semibold">说明</div><button class="icon-btn" data-close>✕</button></div>
     <div>
-      <div class="text-xs text-gray-400 mb-1">今日 Top 20 监控名单（可手动增删，逗号/空格/换行分隔；eToro 搜不到的直接删掉）</div>
-      <textarea id="symbols" rows="3" class="w-full" placeholder="SOUN, BBAI, RKLB, LUNR, OKLO"></textarea>
+      <div class="text-slate-400 text-xs tracking-widest mb-2">战术阶段 (ET)</div>
+      <ul class="space-y-1.5">
+        <li><b class="text-sky-300">09:00–09:29 盘前选股期</b>：抓取 Top 20，并在 eToro 预先搜索确认可交易</li>
+        <li><b class="text-amber-300">09:30–09:32 开盘观察期</b>：消化前 3 分钟波动，严禁追高</li>
+        <li><b class="text-emerald-300">09:33–09:42 黄金狙击期</b>：绿色响铃立即切 eToro 下单</li>
+        <li><b class="text-rose-300">09:42–09:45 强制清仓</b>：手动关闭未触及止盈的仓位</li>
+      </ul>
     </div>
-    <div class="flex gap-3 items-center">
-      <button id="btnRadar" class="btn bg-emerald-500 text-black">▶ 开始实时雷达盯盘</button>
-      <span id="radarStatus" class="text-xs text-gray-500">未启动（每 3 秒刷新）</span>
+    <div>
+      <div class="text-slate-400 text-xs tracking-widest mb-2">信号（相对开盘价涨幅）</div>
+      <ul class="space-y-1.5">
+        <li><b class="text-amber-300">准备瞄准</b> +1.5%～+2.49%：资金启动，提前打开该股 Trade 窗口</li>
+        <li><b class="text-emerald-300">狙击信号</b> +2.5%～+4.8% 且价格高于上次轮询：闪烁 + 提示音，最佳进场点</li>
+        <li><b class="text-orange-300">冲刺止盈</b> ≥ +5.0%：加速段，准备分批锁定 +7%</li>
+      </ul>
     </div>
-  </div>
-
-  <!-- 雷达 -->
-  <div>
-    <div class="text-sm text-gray-400 mb-2">雷达面板（信号强度优先置顶）</div>
-    <div id="cards" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
-  </div>
-
-  <div class="text-xs text-gray-600 pb-6">
-    仅为个人辅助工具，不构成投资建议。小盘股开盘波动与滑点极大，请严格执行止损。涨幅基于行情接口返回的 open；若当前非开盘交易时段，open 可能是上一交易日数据。
+    <div>
+      <div class="text-slate-400 text-xs tracking-widest mb-2">eToro 下单数字</div>
+      <ul class="space-y-1.5">
+        <li>买入上限 = 现价 × 1.003 · 止盈 = 现价 × 1.07 · 止损 = 现价 × 0.97 · 股数 = 本金 ÷ 现价</li>
+        <li>点击代码复制并去 eToro 搜索；点击数字可单独复制；× 剔除 eToro 没有的股票</li>
+      </ul>
+    </div>
+    <div>
+      <div class="text-slate-400 text-xs tracking-widest mb-2">选股漏斗</div>
+      <ul class="space-y-1.5">
+        <li>市值 $1.5 亿～$80 亿 · 价格 $2～$60 · 相对成交量 ≥ 1.2</li>
+        <li>按涨幅与相对量综合排序取前 15，加保底池 SOUN / BBAI / RKLB / LUNR / OKLO，去重后最多 20 只</li>
+      </ul>
+    </div>
+    <div class="text-slate-500 text-xs">API 用量按本设备请求次数估算（每日重置，可在设置中手动归零）。仅为个人辅助工具，不构成投资建议，请严格执行止损。</div>
   </div>
 </div>
 
+<!-- ============ 设置 ============ -->
+<div id="setModal" class="modal hidden">
+  <div class="glass w-full max-w-sm p-6 space-y-5">
+    <div class="flex items-center justify-between"><div class="text-lg font-semibold">设置</div><button class="icon-btn" data-close>✕</button></div>
+    <div class="flex items-center justify-between text-sm"><span class="text-slate-400">账号</span><b id="whoami">-</b></div>
+    <label class="block text-sm">
+      <span class="text-slate-400">API 每日额度</span>
+      <input id="limInput" type="number" min="1" class="field mt-1.5">
+    </label>
+    <div class="flex items-center justify-between text-sm"><span class="text-slate-400">今日已用</span><b id="useDetail" class="num">0</b></div>
+    <div class="grid grid-cols-2 gap-3">
+      <button id="btnReset" class="btn btn-ghost">用量归零</button>
+      <button id="btnLogout" class="btn btn-stop">退出登录</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none px-4"></div>
+
 <script>
 const $ = id => document.getElementById(id);
+const LS = { cap:'sc_cap', sym:'sc_sym', use:'sc_usage', mode:'sc_mode', lim:'sc_lim' };
+const SS = 'sc_session';
 const FALLBACK = ['SOUN','BBAI','RKLB','LUNR','OKLO'];
-const LS_KEY = 'fmp_api_key', LS_CAP = 'fmp_capital', LS_SYM = 'radar_symbols';
+const S = { user:'', token:'', limit:250 };
 
-$('apiKey').value = localStorage.getItem(LS_KEY) || '';
-$('capital').value = localStorage.getItem(LS_CAP) || 500;
-$('symbols').value = localStorage.getItem(LS_SYM) || FALLBACK.join(', ');
-$('apiKey').addEventListener('input', e => localStorage.setItem(LS_KEY, e.target.value.trim()));
-$('capital').addEventListener('input', e => { localStorage.setItem(LS_CAP, e.target.value); renderLast(); });
-$('symbols').addEventListener('input', () => { localStorage.setItem(LS_SYM, $('symbols').value); });
+/* 清理旧版本遗留在本机的明文 Key */
+try { localStorage.removeItem('fmp_api_key'); } catch (e) {}
 
-const getKey = () => $('apiKey').value.trim();
+/*CRYPTO-START*/
+const enc = new TextEncoder(), dec = new TextDecoder();
+const b64 = buf => { const a = new Uint8Array(buf); let s = ''; for (let i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return btoa(s); };
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const hex = buf => [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, '0')).join('');
+const normId = id => String(id).trim().toLowerCase();
+async function idHash(id) { return hex(await crypto.subtle.digest('SHA-256', enc.encode('scanner:' + normId(id)))); }
+async function deriveKey(pw, id, saltB64, iter) {
+  const base = await crypto.subtle.importKey('raw', enc.encode(pw), 'PBKDF2', false, ['deriveKey']);
+  const salt = new Uint8Array([...unb64(saltB64), ...enc.encode(normId(id))]);
+  return crypto.subtle.deriveKey({ name:'PBKDF2', salt, iterations:iter, hash:'SHA-256' }, base, { name:'AES-GCM', length:256 }, false, ['encrypt', 'decrypt']);
+}
+async function openVault(vault, id, pw) {
+  const h = await idHash(id);
+  const u = (vault.users || []).find(x => x.h === h);
+  if (!u) throw new Error('bad');
+  const key = await deriveKey(pw, id, u.s, vault.iter);
+  const dekRaw = await crypto.subtle.decrypt({ name:'AES-GCM', iv:unb64(u.iv) }, key, unb64(u.w));
+  const dek = await crypto.subtle.importKey('raw', dekRaw, 'AES-GCM', false, ['decrypt']);
+  const plain = await crypto.subtle.decrypt({ name:'AES-GCM', iv:unb64(vault.data.iv) }, dek, unb64(vault.data.ct));
+  return JSON.parse(dec.decode(plain));
+}
+/*CRYPTO-END*/
+
+/* ---------- 登录 ---------- */
+let fails = 0;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+$('loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const id = $('lid').value, pw = $('lpw').value, btn = $('lbtn'), err = $('lerr');
+  if (!id.trim() || !pw) { err.textContent = '请输入 ID 和密码'; return; }
+  btn.disabled = true; btn.textContent = '验证中…'; err.textContent = '';
+  try {
+    let vault;
+    try {
+      const r = await fetch('vault.json', { cache:'no-store' });
+      if (!r.ok) throw new Error('nov');
+      vault = await r.json();
+    } catch (x) { err.textContent = '未找到 vault.json（请先用 admin.html 生成并上传）'; return; }
+    try {
+      const data = await openVault(vault, id, pw);
+      fails = 0;
+      const sess = { user:normId(id), token:data.token, limit:data.limit || 250 };
+      sessionStorage.setItem(SS, JSON.stringify(sess));
+      enter(sess);
+    } catch (x) {
+      fails++; await sleep(Math.min(4000, 500 * fails));
+      err.textContent = 'ID 或密码错误';
+    }
+  } finally { btn.disabled = false; btn.textContent = '进入'; }
+});
+
+function enter(sess) {
+  Object.assign(S, sess);
+  $('login').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('lpw').value = '';
+  $('whoami').textContent = S.user;
+  initApp();
+}
+$('btnLogout').addEventListener('click', () => { sessionStorage.removeItem(SS); location.reload(); });
+
+/* ---------- 基础设置 ---------- */
 const getCap = () => Math.max(1, parseFloat($('capital').value) || 500);
-const parseSyms = () => [...new Set($('symbols').value.toUpperCase().split(/[\s,;，；]+/).map(s => s.trim()).filter(Boolean))];
-const setSyms = arr => { $('symbols').value = arr.join(', '); localStorage.setItem(LS_SYM, $('symbols').value); };
-const log = (t) => { $('fetchLog').textContent = t; };
+const parseSyms = () => [...new Set($('symbols').value.toUpperCase().split(/[\s,;，；]+/).map(s => s.replace(/[^A-Z0-9.\-]/g, '')).filter(Boolean))];
+const setSyms = arr => { $('symbols').value = arr.join(', '); saveSyms(); };
+function saveSyms() { localStorage.setItem(LS.sym, $('symbols').value); $('symCount').textContent = parseSyms().length; }
+const f2 = n => (isFinite(n) ? n.toFixed(2) : '--');
 
-/* ---------- ET 时钟与阶段 ---------- */
-function etParts() {
-  const f = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit', weekday:'short' });
-  const o = {}; f.formatToParts(new Date()).forEach(p => o[p.type] = p.value);
-  let h = parseInt(o.hour) % 24;
-  return { h, m: parseInt(o.minute), s: parseInt(o.second), wd: o.weekday, str: `${String(h).padStart(2,'0')}:${o.minute}:${o.second}` };
+function toast(msg, ms = 2400) {
+  const d = document.createElement('div');
+  d.className = 'pointer-events-auto glass px-4 py-2.5 text-sm shadow-2xl max-w-sm text-center';
+  d.textContent = msg; $('toasts').appendChild(d);
+  setTimeout(() => d.remove(), ms);
 }
-function phaseOf(h, m) {
-  const t = h * 60 + m;
-  if (t >= 540 && t <= 569) return { txt:'【盘前选股期】点击“抓取今日 Top 20”，并在 eToro 预先搜索确认可交易', cls:'bg-sky-900 text-sky-200' };
-  if (t >= 570 && t <= 572) return { txt:'【开盘观察期】消化前3分钟波动，严禁追高', cls:'bg-yellow-900 text-yellow-200' };
-  if (t >= 573 && t < 582) return { txt:'【黄金狙击期】绿色响铃立即切 eToro 下单', cls:'bg-emerald-800 text-emerald-100' };
-  if (t >= 582 && t <= 585) return { txt:'【强制清仓倒计时】准备在 eToro 手动关闭未触及止盈的仓位', cls:'bg-red-900 text-red-200' };
-  return { txt:'【非战术时段】等待 09:00 ET 盘前选股期', cls:'bg-gray-800 text-gray-400' };
-}
-function tickClock() {
-  const p = etParts();
-  $('etClock').textContent = p.str + ' ' + p.wd;
-  const ph = phaseOf(p.h, p.m);
-  const box = $('phaseBox');
-  box.textContent = ph.txt;
-  box.className = 'flex-1 min-w-[260px] px-4 py-2 rounded-lg font-bold text-sm ' + ph.cls;
-}
-setInterval(tickClock, 1000); tickClock();
 
-/* ---------- FMP 请求（v3 失败自动降级 /stable/） ---------- */
+/* ---------- 弹窗 ---------- */
+const openM = id => $(id).classList.remove('hidden');
+document.querySelectorAll('.modal').forEach(m => m.addEventListener('click', e => { if (e.target === m || e.target.hasAttribute('data-close')) m.classList.add('hidden'); }));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal').forEach(m => m.classList.add('hidden')); });
+$('btnHelp').addEventListener('click', () => openM('helpModal'));
+$('btnSet').addEventListener('click', () => { refreshSettings(); openM('setModal'); });
+$('useChip').addEventListener('click', () => { refreshSettings(); openM('setModal'); });
+
+/* ---------- API 用量 ---------- */
+const dayKey = () => new Date().toISOString().slice(0, 10);
+function usage() {
+  let u; try { u = JSON.parse(localStorage.getItem(LS.use)); } catch (e) {}
+  if (!u || u.d !== dayKey()) u = { d:dayKey(), n:0 };
+  return u;
+}
+const limit = () => parseInt(localStorage.getItem(LS.lim)) || S.limit || 250;
+function bump() { const u = usage(); u.n++; localStorage.setItem(LS.use, JSON.stringify(u)); renderUsage(); }
+function renderUsage() {
+  const n = usage().n, L = limit(), pct = Math.min(100, n / L * 100);
+  $('useTxt').textContent = `${n}/${L}`;
+  const bar = $('useBar'); bar.style.width = pct + '%';
+  bar.className = 'block h-full rounded-full ' + (pct >= 90 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-400' : 'bg-emerald-400');
+  $('useDetail').textContent = `${n} / ${L}`;
+}
+function refreshSettings() { $('limInput').value = limit(); renderUsage(); }
+$('limInput').addEventListener('change', e => { const v = parseInt(e.target.value); if (v > 0) localStorage.setItem(LS.lim, v); renderUsage(); });
+$('btnReset').addEventListener('click', () => { localStorage.setItem(LS.use, JSON.stringify({ d:dayKey(), n:0 })); renderUsage(); toast('用量已归零'); });
+
+/* ---------- FMP 请求（记住可用端点，减少浪费额度） ---------- */
+const B3 = 'https://financialmodelingprep.com/api/v3', BS = 'https://financialmodelingprep.com/stable';
+const EP = {
+  v3:     { gainers: () => `${B3}/stock_market/gainers`, actives: () => `${B3}/stock_market/actives`, quote: s => `${B3}/quote/${s}` },
+  stable: { gainers: () => `${BS}/biggest-gainers`,      actives: () => `${BS}/most-actives`,        quote: s => `${BS}/batch-quote?symbols=${s}` }
+};
+let lastErr = '';
 async function getJson(url) {
-  const r = await fetch(url);
+  bump();
+  const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'apikey=' + encodeURIComponent(S.token));
+  if (r.status === 429) { localStorage.setItem(LS.use, JSON.stringify({ d:dayKey(), n:Math.max(usage().n, limit()) })); renderUsage(); throw new Error('API 额度已用完 (429)'); }
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const j = await r.json();
   if (j && !Array.isArray(j) && (j['Error Message'] || j.error || j.message)) throw new Error(j['Error Message'] || j.error || j.message);
   return Array.isArray(j) ? j : [];
 }
-async function tryUrls(urls) {
-  let lastErr;
-  for (const u of urls) {
-    try { const d = await getJson(u); if (d.length) return d; } catch (e) { lastErr = e; }
+async function api(kind, arg) {
+  const first = localStorage.getItem(LS.mode) === 'stable' ? 'stable' : 'v3';
+  const order = [first, first === 'v3' ? 'stable' : 'v3'];
+  for (const m of order) {
+    try {
+      const d = await getJson(EP[m][kind](arg));
+      if (d.length) { localStorage.setItem(LS.mode, m); return d; }
+    } catch (e) { lastErr = e.message; if (/429/.test(e.message)) break; }
   }
-  if (lastErr) console.warn('所有端点失败', lastErr);
   return [];
 }
-const B3 = 'https://financialmodelingprep.com/api/v3', BS = 'https://financialmodelingprep.com/stable';
-const getGainers = k => tryUrls([`${B3}/stock_market/gainers?apikey=${k}`, `${BS}/biggest-gainers?apikey=${k}`]);
-const getActives = k => tryUrls([`${B3}/stock_market/actives?apikey=${k}`, `${BS}/most-actives?apikey=${k}`]);
-
 function normQ(q) {
   return {
-    symbol: q.symbol,
-    name: q.name || '',
-    price: +q.price || 0,
-    open: +q.open || 0,
-    volume: +q.volume || 0,
-    avgVolume: +(q.avgVolume ?? q.averageVolume ?? 0),
-    marketCap: +q.marketCap || 0,
+    symbol: q.symbol, price: +q.price || 0, open: +q.open || 0, volume: +q.volume || 0,
+    avgVolume: +(q.avgVolume ?? q.averageVolume ?? 0), marketCap: +q.marketCap || 0,
     chg: +(q.changesPercentage ?? q.changePercentage ?? 0)
   };
 }
-async function getQuotes(symbols, k) {
+async function getQuotes(symbols) {
   const out = [];
   for (let i = 0; i < symbols.length; i += 40) {
-    const chunk = symbols.slice(i, i + 40).join(',');
-    const d = await tryUrls([`${B3}/quote/${chunk}?apikey=${k}`, `${BS}/batch-quote?symbols=${chunk}&apikey=${k}`]);
+    const d = await api('quote', symbols.slice(i, i + 40).join(','));
     out.push(...d.map(normQ));
   }
   return out;
 }
 
 /* ---------- 一键选股 ---------- */
-$('btnFetch').addEventListener('click', async () => {
-  const k = getKey();
-  if (!k) return log('⚠️ 请先填写 FMP API Key');
-  const btn = $('btnFetch'); btn.disabled = true; btn.textContent = '⏳ 抓取中…';
+async function fetchTop20() {
+  const btn = $('btnFetch'), label = '⚡ 抓取今日 Top 20';
+  btn.disabled = true; lastErr = '';
   try {
-    log('1/3 并发请求涨幅榜与活跃榜…');
-    const [g, a] = await Promise.all([getGainers(k), getActives(k)]);
+    btn.textContent = '⏳ 1/3 榜单…';
+    const [g, a] = await Promise.all([api('gainers'), api('actives')]);
     const cand = [...new Set([...g, ...a].map(x => (x.symbol || x.ticker || '').toUpperCase()).filter(s => /^[A-Z]{1,5}$/.test(s)))];
-    if (!cand.length) throw new Error('涨幅榜/活跃榜无数据（检查 Key 或套餐权限）');
-    log(`2/3 候选 ${cand.length} 只，批量获取快照与市值…`);
-    const quotes = await getQuotes(cand, k);
-    log('3/3 执行小盘高爆发漏斗…');
+    if (!cand.length) throw new Error(lastErr || '榜单无数据（检查套餐权限）');
+    btn.textContent = `⏳ 2/3 快照 ${cand.length}…`;
+    const quotes = await getQuotes(cand);
+    btn.textContent = '⏳ 3/3 筛选…';
     let noAvg = 0;
     const passed = quotes.filter(q => {
       if (q.marketCap < 150e6 || q.marketCap > 8e9) return false;
       if (q.price < 2 || q.price > 60) return false;
       if (q.avgVolume > 0) return q.volume / q.avgVolume >= 1.2;
-      noAvg++; return true; // 缺少均量数据则不因此淘汰
+      noAvg++; return true;
     }).map(q => ({ ...q, rvol: q.avgVolume > 0 ? q.volume / q.avgVolume : 1 }));
     passed.sort((x, y) => (y.chg + Math.min(y.rvol, 10) * 2) - (x.chg + Math.min(x.rvol, 10) * 2));
-    const top15 = passed.slice(0, 15).map(q => q.symbol);
-    const final = [...new Set([...top15, ...FALLBACK])].slice(0, 20);
+    const final = [...new Set([...passed.slice(0, 15).map(q => q.symbol), ...FALLBACK])].slice(0, 20);
     setSyms(final);
-    log(`✅ 候选 ${cand.length} → 通过漏斗 ${passed.length} → 取前 ${top15.length} + 保底池，共 ${final.length} 只。` +
-        (noAvg ? `\n（${noAvg} 只缺少日均量数据，未做量能过滤）` : '') +
-        `\n请去 eToro 逐一搜索确认，搜不到的从名单中删除。`);
+    toast(`候选 ${cand.length} → 通过 ${passed.length} → 名单 ${final.length} 只${noAvg ? `（${noAvg} 只无均量数据未过滤）` : ''}，请去 eToro 确认`, 5200);
   } catch (e) {
-    log('❌ 抓取失败：' + e.message + '（若 CORS/权限报错，请确认 Key 有效并检查浏览器控制台）');
-  } finally {
-    btn.disabled = false; btn.textContent = '⚡ 一键抓取今日 Top 20 爆发小盘股';
-  }
-});
+    toast('抓取失败：' + e.message, 5200);
+  } finally { btn.disabled = false; btn.textContent = label; }
+}
 
 /* ---------- 声音 ---------- */
 let actx;
@@ -210,35 +384,64 @@ function beep() {
   } catch (e) {}
 }
 
-/* ---------- 实时雷达 ---------- */
-let timer = null, lastPrice = {}, lastTier = {}, lastRows = [], demo = false;
+/* ---------- ET 时钟 / 阶段 / 倒计时 ---------- */
+const fmtET = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit', weekday:'short' });
+function etParts() {
+  const o = {}; fmtET.formatToParts(new Date()).forEach(p => o[p.type] = p.value);
+  const h = parseInt(o.hour) % 24, m = parseInt(o.minute), s = parseInt(o.second);
+  return { h, m, s, wd:o.weekday, str:`${String(h).padStart(2, '0')}:${o.minute}:${o.second}` };
+}
+const PHASES = [
+  { from:540, name:'盘前选股期', dot:'bg-sky-400',     ring:'border-sky-400/40' },
+  { from:570, name:'开盘观察期', dot:'bg-amber-400',   ring:'border-amber-400/40' },
+  { from:573, name:'黄金狙击期', dot:'bg-emerald-400', ring:'border-emerald-400/60' },
+  { from:582, name:'强制清仓',   dot:'bg-rose-500',    ring:'border-rose-500/60' },
+  { from:585, name:'待机',       dot:'bg-slate-500',   ring:'border-white/10' }
+];
+function tickClock() {
+  const p = etParts(), t = p.h * 60 + p.m, cur = t * 60 + p.s;
+  $('etClock').textContent = p.str;
+  let idx = -1;
+  for (let i = 0; i < PHASES.length; i++) if (t >= PHASES[i].from) idx = i;
+  const ph = idx < 0 ? PHASES[4] : PHASES[idx];
+  let next = idx < 0 ? 540 * 60 : idx < PHASES.length - 1 ? PHASES[idx + 1].from * 60 : 86400 + 540 * 60;
+  const left = next - cur, hh = Math.floor(left / 3600), mm = Math.floor(left % 3600 / 60), ss = left % 60;
+  $('phaseName').textContent = ph.name;
+  $('phaseDot').className = 'w-2.5 h-2.5 rounded-full ' + ph.dot;
+  $('phasePill').className = 'flex items-center gap-3 px-5 py-3 rounded-2xl bg-white/5 border ' + ph.ring;
+  $('phaseCd').textContent = (hh ? hh + ':' : '') + String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+}
+
+/* ---------- 雷达 ---------- */
+let timer = null, lastPrice = {}, lastTier = {}, lastRows = [];
 const TIERS = {
-  sniper: { rank:3, label:'🟢 第3分钟狙击信号', cls:'bg-emerald-500 text-black' },
-  sprint: { rank:2, label:'🟠 冲刺止盈区', cls:'bg-orange-500 text-black' },
-  aim:    { rank:1, label:'🟡 准备瞄准', cls:'bg-yellow-400 text-black' },
-  none:   { rank:0, label:'待机', cls:'bg-gray-700 text-gray-300' }
+  sniper: { rank:3, label:'狙击', cls:'bg-emerald-400 text-black', box:'t-sniper', bar:'from-emerald-300 to-lime-300' },
+  sprint: { rank:2, label:'冲刺止盈', cls:'bg-orange-400 text-black', box:'t-sprint', bar:'from-orange-400 to-amber-300' },
+  aim:    { rank:1, label:'准备瞄准', cls:'bg-amber-300 text-black', box:'t-aim', bar:'from-amber-300 to-yellow-200' },
+  none:   { rank:0, label:'待机', cls:'bg-white/10 text-slate-300', box:'', bar:'from-slate-500 to-slate-400' }
 };
 function tierOf(surge, price, prev) {
   if (surge >= 5.0) return 'sprint';
   if (surge >= 2.5 && surge <= 4.8 && prev != null && price > prev) return 'sniper';
-  if (surge >= 1.5 && surge < 2.5) return 'aim';
-  if (surge >= 2.5 && surge < 5.0) return 'aim'; // 2.5~5 但未满足"高于上次价"，保持瞄准
+  if (surge >= 1.5) return 'aim';
   return 'none';
 }
-const f2 = n => (isFinite(n) ? n.toFixed(2) : '--');
-
+function setLive(on, txt) {
+  $('liveDot').className = 'w-2 h-2 rounded-full ' + (on ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600');
+  $('liveTxt').textContent = txt;
+}
 async function poll() {
   const syms = parseSyms();
   if (!syms.length) return;
-  const k = getKey();
-  if (!k) { $('radarStatus').textContent = '⚠️ 缺少 API Key'; return; }
+  if (usage().n >= limit()) { stopRadar(); toast('今日 API 额度已用完，雷达已停止', 5000); return; }
   try {
-    const quotes = await getQuotes(syms, k);
+    lastErr = '';
+    const quotes = await getQuotes(syms);
+    if (!quotes.length) throw new Error(lastErr || '无数据');
     const rows = quotes.map(q => {
       const surge = q.open > 0 ? ((q.price - q.open) / q.open) * 100 : 0;
       const prev = lastPrice[q.symbol];
-      const tier = tierOf(surge, q.price, prev);
-      return { ...q, surge, tier, rising: prev != null && q.price > prev };
+      return { ...q, surge, tier:tierOf(surge, q.price, prev) };
     });
     let ring = false;
     rows.forEach(r => {
@@ -246,94 +449,111 @@ async function poll() {
       lastTier[r.symbol] = r.tier; lastPrice[r.symbol] = r.price;
     });
     if (ring) beep();
-    lastRows = rows;
-    render(rows);
-    $('radarStatus').textContent = `✅ 已刷新 ${etParts().str} ET · 监控 ${rows.length}/${syms.length} 只`;
+    lastRows = rows; render(rows);
+    setLive(true, etParts().str + ' · ' + rows.length);
   } catch (e) {
-    $('radarStatus').textContent = '❌ 刷新失败：' + e.message;
+    setLive(true, '刷新失败');
+    if (timer) toast('刷新失败：' + e.message, 3000);
   }
 }
-function renderLast() { if (lastRows.length) render(lastRows); }
+function startRadar() {
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
+  lastPrice = {}; lastTier = {};
+  const b = $('btnRadar'); b.textContent = '■ 停止雷达'; b.className = 'btn btn-stop text-base';
+  setLive(true, '连接中');
+  poll(); timer = setInterval(poll, 3000);
+}
+function stopRadar() {
+  if (timer) clearInterval(timer); timer = null;
+  const b = $('btnRadar'); b.textContent = '▶ 开始雷达'; b.className = 'btn btn-violet text-base';
+  setLive(false, '待机');
+}
 
 function render(rows) {
   const cap = getCap();
   const sorted = [...rows].sort((a, b) => TIERS[b.tier].rank - TIERS[a.tier].rank || b.surge - a.surge);
   $('cards').innerHTML = sorted.map(r => {
-    const t = TIERS[r.tier], p = r.price;
-    const active = r.tier !== 'none';
-    const sc = r.surge >= 0 ? 'text-emerald-400' : 'text-red-400';
-    const order = active ? `
-      <div class="grid grid-cols-2 gap-2 mt-3 text-xs">
-        <div class="copybox"><div class="text-gray-500">买入上限 Limit</div><div class="text-base font-bold text-sky-300 num">${f2(p * 1.003)}</div></div>
-        <div class="copybox"><div class="text-gray-500">止盈 TP +7%</div><div class="text-base font-bold text-emerald-300 num">${f2(p * 1.07)}</div></div>
-        <div class="copybox"><div class="text-gray-500">止损 SL -3%</div><div class="text-base font-bold text-red-300 num">${f2(p * 0.97)}</div></div>
-        <div class="copybox"><div class="text-gray-500">建议股数 ($${cap})</div><div class="text-base font-bold text-gray-100 num">${f2(cap / p)}</div></div>
-      </div>
-      <div class="mt-2 text-xs text-gray-400">${r.tier === 'aim' ? '资金开始启动，请提前在 eToro 打开该股 Trade 窗口。' :
-        r.tier === 'sniper' ? '锁定最佳进场点，立即切 eToro 下单！' : '已进入加速冲刺段，准备分批锁定 +7% 利润。'}</div>` : '';
+    const t = TIERS[r.tier], p = r.price, active = r.tier !== 'none';
+    const sc = r.surge >= 0 ? 'text-emerald-300' : 'text-rose-400';
+    const w = Math.max(0, Math.min(100, r.surge / 6 * 100));
+    const vals = active ? `
+      <div class="grid grid-cols-2 gap-2 mt-4">
+        <button class="valbtn" data-act="val" data-v="${f2(p * 1.003)}"><div class="text-[10px] tracking-widest text-slate-500">LIMIT</div><div class="text-base font-bold text-sky-300 num">${f2(p * 1.003)}</div></button>
+        <button class="valbtn" data-act="val" data-v="${f2(cap / p)}"><div class="text-[10px] tracking-widest text-slate-500">SHARES</div><div class="text-base font-bold text-white num">${f2(cap / p)}</div></button>
+        <button class="valbtn" data-act="val" data-v="${f2(p * 1.07)}"><div class="text-[10px] tracking-widest text-slate-500">TP +7%</div><div class="text-base font-bold text-emerald-300 num">${f2(p * 1.07)}</div></button>
+        <button class="valbtn" data-act="val" data-v="${f2(p * 0.97)}"><div class="text-[10px] tracking-widest text-slate-500">SL −3%</div><div class="text-base font-bold text-rose-300 num">${f2(p * 0.97)}</div></button>
+      </div>` : '';
     return `
-    <div class="panel p-3 ${r.tier === 'sniper' ? 'flash' : ''} ${active ? '' : 'opacity-60'}">
+    <div class="glass p-4 ${t.box} ${active ? '' : 'opacity-60'}">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <button onclick="copySym('${r.symbol}')" class="text-xl font-extrabold text-white hover:text-sky-300" title="点击复制">${r.symbol}</button>
-          <span class="px-2 py-0.5 rounded text-xs font-bold ${t.cls}">${t.label}</span>
+          <button data-act="copy" data-v="${r.symbol}" class="text-xl font-extrabold tracking-tight text-white hover:text-violet-300 transition">${r.symbol}</button>
+          <span class="px-2 py-0.5 rounded-full text-[11px] font-bold ${t.cls}">${t.label}</span>
         </div>
-        <button onclick="removeSym('${r.symbol}')" class="text-gray-500 hover:text-red-400 text-lg leading-none" title="剔除此股（eToro 没有）">×</button>
+        <button data-act="rm" data-v="${r.symbol}" class="text-slate-500 hover:text-rose-400 text-lg leading-none px-1">×</button>
       </div>
-      <div class="flex items-end justify-between mt-2">
-        <div class="text-2xl font-bold num">$${f2(p)}</div>
-        <div class="text-right"><div class="text-xs text-gray-500">较开盘 ${f2(r.open)}</div><div class="text-lg font-bold num ${sc}">${r.surge >= 0 ? '+' : ''}${f2(r.surge)}%</div></div>
+      <div class="flex items-end justify-between mt-3">
+        <div class="text-3xl font-semibold num">$${f2(p)}</div>
+        <div class="text-right"><div class="text-[11px] text-slate-500 num">O ${f2(r.open)}</div><div class="text-xl font-bold num ${sc}">${r.surge >= 0 ? '+' : ''}${f2(r.surge)}%</div></div>
       </div>
-      ${order}
+      <div class="relative h-1.5 rounded-full bg-white/10 mt-3">
+        <div class="h-full rounded-full bg-gradient-to-r ${t.bar}" style="width:${w}%"></div>
+        <span class="absolute top-[-2px] h-[10px] w-px bg-white/30" style="left:${1.5 / 6 * 100}%"></span>
+        <span class="absolute top-[-2px] h-[10px] w-px bg-white/30" style="left:${2.5 / 6 * 100}%"></span>
+        <span class="absolute top-[-2px] h-[10px] w-px bg-white/30" style="left:${5 / 6 * 100}%"></span>
+      </div>
+      ${vals}
     </div>`;
-  }).join('') || '<div class="text-gray-600 text-sm">暂无数据</div>';
+  }).join('');
 }
 
-window.copySym = async (s) => {
+async function copyText(s) {
   try { await navigator.clipboard.writeText(s); } catch (e) {
     const ta = document.createElement('textarea'); ta.value = s; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
   }
-  toast(`已复制 ${s}，去 eToro 搜索`);
-};
-window.removeSym = (s) => {
-  setSyms(parseSyms().filter(x => x !== s));
-  lastRows = lastRows.filter(r => r.symbol !== s);
-  delete lastPrice[s]; delete lastTier[s];
-  renderLast();
-  toast(`已剔除 ${s}`);
-};
-function toast(msg) {
-  const d = document.createElement('div');
-  d.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 bg-sky-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm z-50';
-  d.textContent = msg; document.body.appendChild(d);
-  setTimeout(() => d.remove(), 1800);
+}
+$('cards').addEventListener('click', async e => {
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  const v = el.dataset.v, act = el.dataset.act;
+  if (act === 'copy') { await copyText(v); toast(`已复制 ${v}，去 eToro 搜索`); }
+  else if (act === 'val') { await copyText(v); toast(`已复制 ${v}`, 1400); }
+  else if (act === 'rm') {
+    setSyms(parseSyms().filter(x => x !== v));
+    lastRows = lastRows.filter(r => r.symbol !== v); delete lastPrice[v]; delete lastTier[v];
+    if (lastRows.length) render(lastRows); else $('cards').innerHTML = '';
+    toast(`已剔除 ${v}`, 1400);
+  }
+});
+
+/* ---------- 初始化 ---------- */
+let inited = false;
+function initApp() {
+  if (inited) return; inited = true;
+  $('capital').value = localStorage.getItem(LS.cap) || localStorage.getItem('fmp_capital') || 500;
+  $('symbols').value = localStorage.getItem(LS.sym) || localStorage.getItem('radar_symbols') || FALLBACK.join(', ');
+  $('symCount').textContent = parseSyms().length;
+  $('symbols').addEventListener('input', saveSyms);
+  $('capital').addEventListener('input', e => { localStorage.setItem(LS.cap, e.target.value); if (lastRows.length) render(lastRows); });
+  $('btnFetch').addEventListener('click', fetchTop20);
+  $('btnRadar').addEventListener('click', () => timer ? stopRadar() : startRadar());
+  $('btnTest').addEventListener('click', () => {
+    beep();
+    const mk = (symbol, price, open, tier) => ({ symbol, price, open, surge:((price - open) / open) * 100, tier });
+    render([mk('DEMO1', 10.35, 10.00, 'sniper'), mk('DEMO2', 20.30, 19.50, 'sprint'), mk('DEMO3', 5.08, 5.00, 'aim'), mk('DEMO4', 8.00, 8.00, 'none')]);
+    lastRows = [];
+  });
+  renderUsage(); tickClock(); setInterval(tickClock, 1000);
 }
 
-$('btnRadar').addEventListener('click', () => {
-  const btn = $('btnRadar');
-  if (timer) {
-    clearInterval(timer); timer = null;
-    btn.textContent = '▶ 开始实时雷达盯盘'; btn.className = 'btn bg-emerald-500 text-black';
-    $('radarStatus').textContent = '已停止';
-    return;
-  }
-  demo = false;
-  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
-  lastPrice = {}; lastTier = {};
-  btn.textContent = '■ 停止雷达'; btn.className = 'btn bg-red-500 text-white';
-  poll(); timer = setInterval(poll, 3000);
-});
+(function boot() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(SS));
+    if (s && s.token) { enter(s); return; }
+  } catch (e) {}
+  $('login').classList.remove('hidden');
+  $('lid').focus();
+})();
 
-/* ---------- 测试声音与卡片效果 ---------- */
-$('btnTest').addEventListener('click', () => {
-  beep();
-  const mk = (symbol, price, open, tier) => ({ symbol, price, open, surge: ((price - open) / open) * 100, tier });
-  render([mk('DEMO1', 10.35, 10.00, 'sniper'), mk('DEMO2', 20.30, 19.50, 'sprint'), mk('DEMO3', 5.08, 5.00, 'aim'), mk('DEMO4', 8.00, 8.00, 'none')]);
-  lastRows = [];
-  toast('测试卡片已显示（启动雷达后会被真实数据覆盖）');
-});
-</script>
-<script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
