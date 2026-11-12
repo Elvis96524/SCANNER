@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scanner</title>
+<meta name="theme-color" content="#0b0e14">
+<meta name="description" content="每日美股 Top 20 爆发小盘股筛选与开盘狙击雷达">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="scanner">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#0b0e14; color:#d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .panel { background:#121722; border:1px solid #1f2937; border-radius:10px; }
+  @keyframes flashGreen { 0%,100%{ box-shadow:0 0 0 0 rgba(34,197,94,.0); background:#0f2a1c; } 50%{ box-shadow:0 0 18px 3px rgba(34,197,94,.75); background:#14532d; } }
+  .flash { animation: flashGreen .9s infinite; border-color:#22c55e !important; }
+  input, textarea { background:#0b0e14; border:1px solid #243041; border-radius:6px; padding:6px 10px; color:#e5e7eb; outline:none; }
+  input:focus, textarea:focus { border-color:#38bdf8; }
+  .btn { padding:8px 14px; border-radius:8px; font-weight:700; cursor:pointer; transition:.15s; }
+  .btn:hover { filter:brightness(1.15); }
+  .num { font-variant-numeric: tabular-nums; }
+  .copybox { background:#0b0e14; border:1px solid #243041; border-radius:6px; padding:4px 8px; }
+</style>
+</head>
+<body class="min-h-screen p-4">
+<div class="max-w-7xl mx-auto space-y-4">
+
+  <!-- 状态栏 -->
+  <div class="panel p-4 flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <div class="text-xs text-gray-500">美东时间 (America/New_York)</div>
+      <div id="etClock" class="text-3xl font-bold text-sky-400 num">--:--:--</div>
+    </div>
+    <div id="phaseBox" class="flex-1 min-w-[260px] px-4 py-2 rounded-lg bg-gray-800 text-gray-300 font-bold text-sm">--</div>
+    <button id="btnTest" class="btn bg-gray-700 text-gray-100">🔊 测试声音与卡片效果</button>
+  </div>
+
+  <!-- 设置 -->
+  <div class="panel p-4 space-y-3">
+    <div class="flex flex-wrap gap-4 items-end">
+      <label class="flex flex-col text-xs text-gray-400">FMP API Key
+        <input id="apiKey" type="password" class="w-72 mt-1" placeholder="粘贴你的 FMP API Key">
+      </label>
+      <label class="flex flex-col text-xs text-gray-400">单笔投入本金 ($)
+        <input id="capital" type="number" min="1" value="500" class="w-32 mt-1">
+      </label>
+      <button id="btnFetch" class="btn bg-amber-500 text-black text-base">⚡ 一键抓取今日 Top 20 爆发小盘股</button>
+    </div>
+    <div id="fetchLog" class="text-xs text-gray-500 whitespace-pre-line min-h-[1.5em]"></div>
+    <div>
+      <div class="text-xs text-gray-400 mb-1">今日 Top 20 监控名单（可手动增删，逗号/空格/换行分隔；eToro 搜不到的直接删掉）</div>
+      <textarea id="symbols" rows="3" class="w-full" placeholder="SOUN, BBAI, RKLB, LUNR, OKLO"></textarea>
+    </div>
+    <div class="flex gap-3 items-center">
+      <button id="btnRadar" class="btn bg-emerald-500 text-black">▶ 开始实时雷达盯盘</button>
+      <span id="radarStatus" class="text-xs text-gray-500">未启动（每 3 秒刷新）</span>
+    </div>
+  </div>
+
+  <!-- 雷达 -->
+  <div>
+    <div class="text-sm text-gray-400 mb-2">雷达面板（信号强度优先置顶）</div>
+    <div id="cards" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
+  </div>
+
+  <div class="text-xs text-gray-600 pb-6">
+    仅为个人辅助工具，不构成投资建议。小盘股开盘波动与滑点极大，请严格执行止损。涨幅基于行情接口返回的 open；若当前非开盘交易时段，open 可能是上一交易日数据。
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const FALLBACK = ['SOUN','BBAI','RKLB','LUNR','OKLO'];
+const LS_KEY = 'fmp_api_key', LS_CAP = 'fmp_capital', LS_SYM = 'radar_symbols';
+
+$('apiKey').value = localStorage.getItem(LS_KEY) || '';
+$('capital').value = localStorage.getItem(LS_CAP) || 500;
+$('symbols').value = localStorage.getItem(LS_SYM) || FALLBACK.join(', ');
+$('apiKey').addEventListener('input', e => localStorage.setItem(LS_KEY, e.target.value.trim()));
+$('capital').addEventListener('input', e => { localStorage.setItem(LS_CAP, e.target.value); renderLast(); });
+$('symbols').addEventListener('input', () => { localStorage.setItem(LS_SYM, $('symbols').value); });
+
+const getKey = () => $('apiKey').value.trim();
+const getCap = () => Math.max(1, parseFloat($('capital').value) || 500);
+const parseSyms = () => [...new Set($('symbols').value.toUpperCase().split(/[\s,;，；]+/).map(s => s.trim()).filter(Boolean))];
+const setSyms = arr => { $('symbols').value = arr.join(', '); localStorage.setItem(LS_SYM, $('symbols').value); };
+const log = (t) => { $('fetchLog').textContent = t; };
+
+/* ---------- ET 时钟与阶段 ---------- */
+function etParts() {
+  const f = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit', weekday:'short' });
+  const o = {}; f.formatToParts(new Date()).forEach(p => o[p.type] = p.value);
+  let h = parseInt(o.hour) % 24;
+  return { h, m: parseInt(o.minute), s: parseInt(o.second), wd: o.weekday, str: `${String(h).padStart(2,'0')}:${o.minute}:${o.second}` };
+}
+function phaseOf(h, m) {
+  const t = h * 60 + m;
+  if (t >= 540 && t <= 569) return { txt:'【盘前选股期】点击“抓取今日 Top 20”，并在 eToro 预先搜索确认可交易', cls:'bg-sky-900 text-sky-200' };
+  if (t >= 570 && t <= 572) return { txt:'【开盘观察期】消化前3分钟波动，严禁追高', cls:'bg-yellow-900 text-yellow-200' };
+  if (t >= 573 && t < 582) return { txt:'【黄金狙击期】绿色响铃立即切 eToro 下单', cls:'bg-emerald-800 text-emerald-100' };
+  if (t >= 582 && t <= 585) return { txt:'【强制清仓倒计时】准备在 eToro 手动关闭未触及止盈的仓位', cls:'bg-red-900 text-red-200' };
+  return { txt:'【非战术时段】等待 09:00 ET 盘前选股期', cls:'bg-gray-800 text-gray-400' };
+}
+function tickClock() {
+  const p = etParts();
+  $('etClock').textContent = p.str + ' ' + p.wd;
+  const ph = phaseOf(p.h, p.m);
+  const box = $('phaseBox');
+  box.textContent = ph.txt;
+  box.className = 'flex-1 min-w-[260px] px-4 py-2 rounded-lg font-bold text-sm ' + ph.cls;
+}
+setInterval(tickClock, 1000); tickClock();
+
+/* ---------- FMP 请求（v3 失败自动降级 /stable/） ---------- */
+async function getJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const j = await r.json();
+  if (j && !Array.isArray(j) && (j['Error Message'] || j.error || j.message)) throw new Error(j['Error Message'] || j.error || j.message);
+  return Array.isArray(j) ? j : [];
+}
+async function tryUrls(urls) {
+  let lastErr;
+  for (const u of urls) {
+    try { const d = await getJson(u); if (d.length) return d; } catch (e) { lastErr = e; }
+  }
+  if (lastErr) console.warn('所有端点失败', lastErr);
+  return [];
+}
+const B3 = 'https://financialmodelingprep.com/api/v3', BS = 'https://financialmodelingprep.com/stable';
+const getGainers = k => tryUrls([`${B3}/stock_market/gainers?apikey=${k}`, `${BS}/biggest-gainers?apikey=${k}`]);
+const getActives = k => tryUrls([`${B3}/stock_market/actives?apikey=${k}`, `${BS}/most-actives?apikey=${k}`]);
+
+function normQ(q) {
+  return {
+    symbol: q.symbol,
+    name: q.name || '',
+    price: +q.price || 0,
+    open: +q.open || 0,
+    volume: +q.volume || 0,
+    avgVolume: +(q.avgVolume ?? q.averageVolume ?? 0),
+    marketCap: +q.marketCap || 0,
+    chg: +(q.changesPercentage ?? q.changePercentage ?? 0)
+  };
+}
+async function getQuotes(symbols, k) {
+  const out = [];
+  for (let i = 0; i < symbols.length; i += 40) {
+    const chunk = symbols.slice(i, i + 40).join(',');
+    const d = await tryUrls([`${B3}/quote/${chunk}?apikey=${k}`, `${BS}/batch-quote?symbols=${chunk}&apikey=${k}`]);
+    out.push(...d.map(normQ));
+  }
+  return out;
+}
+
+/* ---------- 一键选股 ---------- */
+$('btnFetch').addEventListener('click', async () => {
+  const k = getKey();
+  if (!k) return log('⚠️ 请先填写 FMP API Key');
+  const btn = $('btnFetch'); btn.disabled = true; btn.textContent = '⏳ 抓取中…';
+  try {
+    log('1/3 并发请求涨幅榜与活跃榜…');
+    const [g, a] = await Promise.all([getGainers(k), getActives(k)]);
+    const cand = [...new Set([...g, ...a].map(x => (x.symbol || x.ticker || '').toUpperCase()).filter(s => /^[A-Z]{1,5}$/.test(s)))];
+    if (!cand.length) throw new Error('涨幅榜/活跃榜无数据（检查 Key 或套餐权限）');
+    log(`2/3 候选 ${cand.length} 只，批量获取快照与市值…`);
+    const quotes = await getQuotes(cand, k);
+    log('3/3 执行小盘高爆发漏斗…');
+    let noAvg = 0;
+    const passed = quotes.filter(q => {
+      if (q.marketCap < 150e6 || q.marketCap > 8e9) return false;
+      if (q.price < 2 || q.price > 60) return false;
+      if (q.avgVolume > 0) return q.volume / q.avgVolume >= 1.2;
+      noAvg++; return true; // 缺少均量数据则不因此淘汰
+    }).map(q => ({ ...q, rvol: q.avgVolume > 0 ? q.volume / q.avgVolume : 1 }));
+    passed.sort((x, y) => (y.chg + Math.min(y.rvol, 10) * 2) - (x.chg + Math.min(x.rvol, 10) * 2));
+    const top15 = passed.slice(0, 15).map(q => q.symbol);
+    const final = [...new Set([...top15, ...FALLBACK])].slice(0, 20);
+    setSyms(final);
+    log(`✅ 候选 ${cand.length} → 通过漏斗 ${passed.length} → 取前 ${top15.length} + 保底池，共 ${final.length} 只。` +
+        (noAvg ? `\n（${noAvg} 只缺少日均量数据，未做量能过滤）` : '') +
+        `\n请去 eToro 逐一搜索确认，搜不到的从名单中删除。`);
+  } catch (e) {
+    log('❌ 抓取失败：' + e.message + '（若 CORS/权限报错，请确认 Key 有效并检查浏览器控制台）');
+  } finally {
+    btn.disabled = false; btn.textContent = '⚡ 一键抓取今日 Top 20 爆发小盘股';
+  }
+});
+
+/* ---------- 声音 ---------- */
+let actx;
+function beep() {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+    [880, 1320, 1760].forEach((f, i) => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      const t = actx.currentTime + i * 0.12;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.35, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + 0.18);
+    });
+  } catch (e) {}
+}
+
+/* ---------- 实时雷达 ---------- */
+let timer = null, lastPrice = {}, lastTier = {}, lastRows = [], demo = false;
+const TIERS = {
+  sniper: { rank:3, label:'🟢 第3分钟狙击信号', cls:'bg-emerald-500 text-black' },
+  sprint: { rank:2, label:'🟠 冲刺止盈区', cls:'bg-orange-500 text-black' },
+  aim:    { rank:1, label:'🟡 准备瞄准', cls:'bg-yellow-400 text-black' },
+  none:   { rank:0, label:'待机', cls:'bg-gray-700 text-gray-300' }
+};
+function tierOf(surge, price, prev) {
+  if (surge >= 5.0) return 'sprint';
+  if (surge >= 2.5 && surge <= 4.8 && prev != null && price > prev) return 'sniper';
+  if (surge >= 1.5 && surge < 2.5) return 'aim';
+  if (surge >= 2.5 && surge < 5.0) return 'aim'; // 2.5~5 但未满足"高于上次价"，保持瞄准
+  return 'none';
+}
+const f2 = n => (isFinite(n) ? n.toFixed(2) : '--');
+
+async function poll() {
+  const syms = parseSyms();
+  if (!syms.length) return;
+  const k = getKey();
+  if (!k) { $('radarStatus').textContent = '⚠️ 缺少 API Key'; return; }
+  try {
+    const quotes = await getQuotes(syms, k);
+    const rows = quotes.map(q => {
+      const surge = q.open > 0 ? ((q.price - q.open) / q.open) * 100 : 0;
+      const prev = lastPrice[q.symbol];
+      const tier = tierOf(surge, q.price, prev);
+      return { ...q, surge, tier, rising: prev != null && q.price > prev };
+    });
+    let ring = false;
+    rows.forEach(r => {
+      if (r.tier === 'sniper' && lastTier[r.symbol] !== 'sniper') ring = true;
+      lastTier[r.symbol] = r.tier; lastPrice[r.symbol] = r.price;
+    });
+    if (ring) beep();
+    lastRows = rows;
+    render(rows);
+    $('radarStatus').textContent = `✅ 已刷新 ${etParts().str} ET · 监控 ${rows.length}/${syms.length} 只`;
+  } catch (e) {
+    $('radarStatus').textContent = '❌ 刷新失败：' + e.message;
+  }
+}
+function renderLast() { if (lastRows.length) render(lastRows); }
+
+function render(rows) {
+  const cap = getCap();
+  const sorted = [...rows].sort((a, b) => TIERS[b.tier].rank - TIERS[a.tier].rank || b.surge - a.surge);
+  $('cards').innerHTML = sorted.map(r => {
+    const t = TIERS[r.tier], p = r.price;
+    const active = r.tier !== 'none';
+    const sc = r.surge >= 0 ? 'text-emerald-400' : 'text-red-400';
+    const order = active ? `
+      <div class="grid grid-cols-2 gap-2 mt-3 text-xs">
+        <div class="copybox"><div class="text-gray-500">买入上限 Limit</div><div class="text-base font-bold text-sky-300 num">${f2(p * 1.003)}</div></div>
+        <div class="copybox"><div class="text-gray-500">止盈 TP +7%</div><div class="text-base font-bold text-emerald-300 num">${f2(p * 1.07)}</div></div>
+        <div class="copybox"><div class="text-gray-500">止损 SL -3%</div><div class="text-base font-bold text-red-300 num">${f2(p * 0.97)}</div></div>
+        <div class="copybox"><div class="text-gray-500">建议股数 ($${cap})</div><div class="text-base font-bold text-gray-100 num">${f2(cap / p)}</div></div>
+      </div>
+      <div class="mt-2 text-xs text-gray-400">${r.tier === 'aim' ? '资金开始启动，请提前在 eToro 打开该股 Trade 窗口。' :
+        r.tier === 'sniper' ? '锁定最佳进场点，立即切 eToro 下单！' : '已进入加速冲刺段，准备分批锁定 +7% 利润。'}</div>` : '';
+    return `
+    <div class="panel p-3 ${r.tier === 'sniper' ? 'flash' : ''} ${active ? '' : 'opacity-60'}">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <button onclick="copySym('${r.symbol}')" class="text-xl font-extrabold text-white hover:text-sky-300" title="点击复制">${r.symbol}</button>
+          <span class="px-2 py-0.5 rounded text-xs font-bold ${t.cls}">${t.label}</span>
+        </div>
+        <button onclick="removeSym('${r.symbol}')" class="text-gray-500 hover:text-red-400 text-lg leading-none" title="剔除此股（eToro 没有）">×</button>
+      </div>
+      <div class="flex items-end justify-between mt-2">
+        <div class="text-2xl font-bold num">$${f2(p)}</div>
+        <div class="text-right"><div class="text-xs text-gray-500">较开盘 ${f2(r.open)}</div><div class="text-lg font-bold num ${sc}">${r.surge >= 0 ? '+' : ''}${f2(r.surge)}%</div></div>
+      </div>
+      ${order}
+    </div>`;
+  }).join('') || '<div class="text-gray-600 text-sm">暂无数据</div>';
+}
+
+window.copySym = async (s) => {
+  try { await navigator.clipboard.writeText(s); } catch (e) {
+    const ta = document.createElement('textarea'); ta.value = s; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  toast(`已复制 ${s}，去 eToro 搜索`);
+};
+window.removeSym = (s) => {
+  setSyms(parseSyms().filter(x => x !== s));
+  lastRows = lastRows.filter(r => r.symbol !== s);
+  delete lastPrice[s]; delete lastTier[s];
+  renderLast();
+  toast(`已剔除 ${s}`);
+};
+function toast(msg) {
+  const d = document.createElement('div');
+  d.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 bg-sky-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm z-50';
+  d.textContent = msg; document.body.appendChild(d);
+  setTimeout(() => d.remove(), 1800);
+}
+
+$('btnRadar').addEventListener('click', () => {
+  const btn = $('btnRadar');
+  if (timer) {
+    clearInterval(timer); timer = null;
+    btn.textContent = '▶ 开始实时雷达盯盘'; btn.className = 'btn bg-emerald-500 text-black';
+    $('radarStatus').textContent = '已停止';
+    return;
+  }
+  demo = false;
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
+  lastPrice = {}; lastTier = {};
+  btn.textContent = '■ 停止雷达'; btn.className = 'btn bg-red-500 text-white';
+  poll(); timer = setInterval(poll, 3000);
+});
+
+/* ---------- 测试声音与卡片效果 ---------- */
+$('btnTest').addEventListener('click', () => {
+  beep();
+  const mk = (symbol, price, open, tier) => ({ symbol, price, open, surge: ((price - open) / open) * 100, tier });
+  render([mk('DEMO1', 10.35, 10.00, 'sniper'), mk('DEMO2', 20.30, 19.50, 'sprint'), mk('DEMO3', 5.08, 5.00, 'aim'), mk('DEMO4', 8.00, 8.00, 'none')]);
+  lastRows = [];
+  toast('测试卡片已显示（启动雷达后会被真实数据覆盖）');
+});
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
