@@ -64,6 +64,9 @@
     </div>
     <input id="lid" class="field" placeholder="ID" autocomplete="username" autocapitalize="none" spellcheck="false">
     <input id="lpw" type="password" class="field" placeholder="密码" autocomplete="current-password">
+    <label class="flex items-center gap-2 text-sm text-slate-400 select-none cursor-pointer">
+      <input id="lkeep" type="checkbox" checked class="w-4 h-4 accent-emerald-400"> 保持登录（30 天）
+    </label>
     <button id="lbtn" class="btn btn-primary w-full" type="submit">进入</button>
     <button id="lmode" type="button" class="hidden w-full text-center text-xs text-slate-400 hover:text-slate-200 transition"></button>
     <div id="lerr" class="text-center text-sm text-rose-400 min-h-[1.25rem]"></div>
@@ -101,6 +104,7 @@
       <span id="useTxt" class="font-bold num">0/250</span>
       <span class="w-14 h-1.5 rounded-full bg-white/10 overflow-hidden"><span id="useBar" class="block h-full rounded-full bg-emerald-400" style="width:0%"></span></span>
     </button>
+    <button id="btnLog" class="icon-btn" title="交易记录与统计">📒</button>
     <button id="btnTest" class="icon-btn" title="测试声音与卡片">🔊</button>
     <button id="btnHelp" class="icon-btn" title="说明">ⓘ</button>
     <button id="btnSet" class="icon-btn" title="设置">⚙</button>
@@ -138,6 +142,10 @@
   </details>
 
   <section>
+    <div id="sortBar" class="hidden flex flex-wrap items-center gap-2 mb-3 text-xs">
+      <span class="text-slate-500">排序</span>
+      <button data-sort="def">默认</button><button data-sort="chg">涨幅</button><button data-sort="cap">市值</button><button data-sort="price">价格</button>
+    </div>
     <div id="cards" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
   </section>
 </main>
@@ -178,6 +186,16 @@
       </ul>
     </div>
     <div class="text-slate-500 text-xs">API 用量按本设备请求次数估算（每日重置，可在设置中手动归零）。仅为个人辅助工具，不构成投资建议，请严格执行止损。</div>
+  </div>
+</div>
+
+<!-- ============ 交易记录 ============ -->
+<div id="logModal" class="modal hidden">
+  <div class="glass w-full max-w-lg max-h-[88vh] overflow-y-auto scrollthin p-5 space-y-4 text-sm">
+    <div class="flex items-center justify-between"><div class="text-lg font-semibold">交易记录</div><button class="icon-btn" data-close>✕</button></div>
+    <div class="grid grid-cols-3 gap-2"><button id="tabStat" class="btn btn-violet text-sm">统计</button><button id="tabSym" class="btn btn-ghost text-sm">个股</button><button id="tabRec" class="btn btn-ghost text-sm">记录</button></div>
+    <div id="logBody" class="space-y-3"></div>
+    <div class="grid grid-cols-2 gap-2"><button id="btnCsv" class="btn btn-ghost text-sm">导出 CSV</button><button id="btnClr" class="btn btn-ghost text-sm">清空记录</button></div>
   </div>
 </div>
 
@@ -287,10 +305,33 @@ function guessRepo() {
   return localStorage.getItem('sc_repo') || '';
 }
 function showSetup() { $('sRepo').value = guessRepo(); show('setup'); }
+/* ---- 保持登录：会话用不可导出的 AES 密钥（存 IndexedDB）加密后放 localStorage，30 天滑动有效 ---- */
+const PS = 'sc_keep', KEEP_MS = 30 * 864e5;
+const idbOpen = () => new Promise((res, rej) => { const r = indexedDB.open('scanner', 1); r.onupgradeneeded = () => r.result.createObjectStore('k'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+const idbReq = (mode, fn) => idbOpen().then(db => new Promise((res, rej) => { const q = fn(db.transaction('k', mode).objectStore('k')); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }));
+async function keepSave(sess) {
+  let key = await idbReq('readonly', st => st.get('key'));
+  if (!key) { key = await crypto.subtle.generateKey({ name:'AES-GCM', length:256 }, false, ['encrypt', 'decrypt']); await idbReq('readwrite', st => st.put(key, 'key')); }
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, enc.encode(JSON.stringify({ s:sess, exp:Date.now() + KEEP_MS })));
+  localStorage.setItem(PS, JSON.stringify({ iv:b64(iv), ct:b64(ct) }));
+}
+async function keepLoad() {
+  try {
+    const o = JSON.parse(localStorage.getItem(PS)); if (!o) return null;
+    const key = await idbReq('readonly', st => st.get('key')); if (!key) return null;
+    const j = JSON.parse(dec.decode(await crypto.subtle.decrypt({ name:'AES-GCM', iv:unb64(o.iv) }, key, unb64(o.ct))));
+    if (!j.exp || j.exp < Date.now()) { await keepClear(); return null; }
+    return j.s;
+  } catch (e) { return null; }
+}
+async function keepClear() { localStorage.removeItem(PS); try { await idbReq('readwrite', st => st.delete('key')); } catch (e) {} }
+
 function startSession(id, data, dek) {
   const isAdmin = data.admin === normId(id);
   const sess = { user:normId(id), token:data.token, limit:data.limit || 250, admin:isAdmin, dek:isAdmin ? b64(dek) : '' };
   sessionStorage.setItem(SS, JSON.stringify(sess));
+  if ($('lkeep').checked) keepSave(sess).catch(() => {}); else keepClear();
   enter(sess);
 }
 $('loginForm').addEventListener('submit', async e => {
@@ -344,7 +385,7 @@ function enter(sess) {
   $('aRepo').value = localStorage.getItem('sc_repo') || guessRepo();
   initApp();
 }
-$('btnLogout').addEventListener('click', () => { sessionStorage.removeItem(SS); location.reload(); });
+$('btnLogout').addEventListener('click', async () => { sessionStorage.removeItem(SS); await keepClear(); location.reload(); });
 
 /* ---------- 基础设置 ---------- *//* ---------- 基础设置 ---------- */
 const getCap = () => Math.max(1, parseFloat($('capital').value) || 500);
@@ -425,7 +466,7 @@ async function api(kind, arg) {
 function normQ(q) {
   return {
     symbol: q.symbol, price: +q.price || 0, open: +q.open || 0, volume: +q.volume || 0,
-    avgVolume: +(q.avgVolume ?? q.averageVolume ?? 0), marketCap: +q.marketCap || 0,
+    avgVolume: +(q.avgVolume ?? q.averageVolume ?? 0), marketCap: +q.marketCap || 0, prevClose: +(q.previousClose ?? 0) || 0,
     chg: +(q.changesPercentage ?? q.changePercentage ?? 0)
   };
 }
@@ -468,6 +509,50 @@ async function diag() {
   }
 }
 
+/* ---------- 名单预览（抓取后立即显示，雷达启动后被实时卡片取代） ---------- */
+const K_PREV = 'sc_prev';
+function savePreview(final, quotes) {
+  const m = {}; (quotes || []).forEach(q => m[q.symbol] = q);
+  const items = final.map(sym => { const q = m[sym]; return { symbol:sym, price:q ? q.price : 0, chg:q ? q.chg : 0, cap:q ? q.marketCap : 0, rvol:q && q.avgVolume > 0 ? q.volume / q.avgVolume : 0 }; });
+  try { localStorage.setItem(K_PREV, JSON.stringify({ d:dayKey(), items })); } catch (e) {}
+}
+const K_SORT = 'sc_sort';
+function renderPreview() {
+  $('sortBar').classList.remove('hidden');
+  const sort = localStorage.getItem(K_SORT) || 'def';
+  document.querySelectorAll('#sortBar [data-sort]').forEach(b => b.className = 'px-3 py-1 rounded-full border ' + (b.dataset.sort === sort ? 'bg-white/15 border-white/30 text-white' : 'border-white/10 text-slate-400 hover:text-white'));
+  let pv = null; try { pv = JSON.parse(localStorage.getItem(K_PREV)); } catch (e) {}
+  const byS = {}; ((pv && pv.items) || []).forEach(x => byS[x.symbol] = x);
+  const H = symStats(jLoad().filter(x => x.status !== 'open'));
+  const list = parseSyms().map((sym, i) => ({ sym, i, x:byS[sym] || {} }));
+  list.sort((a, b) => {
+    const ma = !a.x.price, mb = !b.x.price; if (ma !== mb) return ma ? 1 : -1;
+    if (sort === 'chg') return (b.x.chg || 0) - (a.x.chg || 0);
+    if (sort === 'cap') return (b.x.cap || 0) - (a.x.cap || 0);
+    if (sort === 'price') return a.x.price - b.x.price;
+    return a.i - b.i;
+  });
+  const capTxt = c => c >= 1e9 ? '$' + (c / 1e9).toFixed(1) + 'B' : c > 0 ? '$' + Math.round(c / 1e6) + 'M' : '';
+  $('cards').innerHTML = list.map(({ sym, x }) => {
+    const h = H[sym];
+    const ch = x.chg ? `<span class="${x.chg >= 0 ? 'text-emerald-300' : 'text-rose-400'} font-bold num">${x.chg >= 0 ? '+' : ''}${f2(x.chg)}%</span>` : '';
+    const fl = flagsOf(x, h).map(([t, c]) => `<span class="px-1.5 py-0.5 rounded-full text-[10px] font-bold ${c}">${t}</span>`).join('');
+    const hist = h ? `<div class="text-[11px] text-slate-500 num mt-1.5">历史 ${h.n} 笔${h.s.n ? ' · 胜率 ' + h.s.win.toFixed(0) + '% · 期望 ' + fmtP(h.s.exp, 1) : ''}</div>` : '';
+    return `<div class="glass p-3 opacity-90">
+      <div class="flex items-center justify-between">
+        <button data-act="copy" data-v="${sym}" class="text-lg font-extrabold tracking-tight text-white hover:text-violet-300 transition">${sym}</button>
+        <button data-act="rm" data-v="${sym}" class="text-slate-500 hover:text-rose-400 text-lg leading-none px-1">×</button>
+      </div>
+      <div class="flex items-end justify-between mt-2">
+        <div class="text-xl font-semibold num">${x.price ? '$' + f2(x.price) : '—'}</div>
+        <div class="text-right text-xs">${ch}<div class="text-slate-500 num">${capTxt(x.cap)}</div></div>
+      </div>
+      ${fl ? `<div class="flex flex-wrap gap-1 mt-2">${fl}</div>` : ''}${hist}
+    </div>`;
+  }).join('');
+}
+$('sortBar').addEventListener('click', e => { const b = e.target.closest('[data-sort]'); if (!b) return; localStorage.setItem(K_SORT, b.dataset.sort); renderPreview(); });
+
 /* ---------- 一键选股 ---------- */
 async function fetchTop20() {
   const btn = $('btnFetch'), label = '⚡ 抓取今日 Top 20';
@@ -491,6 +576,8 @@ async function fetchTop20() {
     passed.sort((x, y) => (y.chg + Math.min(y.rvol, 10) * 2) - (x.chg + Math.min(x.rvol, 10) * 2));
     const final = [...new Set([...passed.slice(0, 15).map(q => q.symbol), ...FALLBACK])].slice(0, 20);
     setSyms(final);
+    savePreview(final, quotes);
+    if (!timer) renderPreview();
     toast(`候选 ${cand.length} → 通过 ${passed.length} → 名单 ${final.length} 只${noAvg ? `（${noAvg} 只无均量数据未过滤）` : ''}，请去 eToro 确认`, 5200);
   } catch (e) {
     toast('抓取失败：' + e.message, 5200);
@@ -530,6 +617,7 @@ const PHASES = [
   { from:585, name:'待机',       dot:'bg-slate-500',   ring:'border-white/10' }
 ];
 function tickClock() {
+  try { settleOpen(); } catch (e) {}
   const p = etParts(), t = p.h * 60 + p.m, cur = t * 60 + p.s;
   $('etClock').textContent = p.str;
   let idx = -1;
@@ -561,7 +649,7 @@ function setLive(on, txt) {
   $('liveDot').className = 'w-2 h-2 rounded-full ' + (on ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600');
   $('liveTxt').textContent = txt;
 }
-let openCache = {}, seenPx = {}, tickN = 0, rrN = 0, busy = false;
+let openCache = {}, seenPx = {}, prevCache = {}, tickN = 0, rrN = 0, busy = false;
 const freeMode = () => localStorage.getItem(K_NB) === '1';
 async function quoteOne(sym) {
   const d = await getJson(`${BS}/quote?symbol=${encodeURIComponent(sym)}`);
@@ -576,7 +664,7 @@ async function fetchRows(syms) {
   if (need.length) {
     setLive(true, `读取开盘价 ${need.length}`);
     await Promise.all(need.map(async s => {
-      try { const q = await quoteOne(s); if (q && q.open > 0) { openCache[s] = q.open; seenPx[s] = q.price; } } catch (e) { noteErr('quote/' + s, e.message); }
+      try { const q = await quoteOne(s); if (q && q.open > 0) { openCache[s] = q.open; seenPx[s] = q.price; prevCache[s] = q.prevClose; } } catch (e) { noteErr('quote/' + s, e.message); }
     }));
   }
   tickN++;
@@ -587,7 +675,7 @@ async function fetchRows(syms) {
     const stale = syms.filter(s => openCache[s] && !inG.has(s));
     if (stale.length) { const s = stale[rrN++ % stale.length]; try { const q = await quoteOne(s); if (q) seenPx[s] = q.price; } catch (e) { noteErr('quote/' + s, e.message); } }
   }
-  return syms.filter(s => openCache[s] && seenPx[s]).map(s => ({ symbol:s, open:openCache[s], price:seenPx[s], volume:0, avgVolume:0, marketCap:0, chg:0 }));
+  return syms.filter(s => openCache[s] && seenPx[s]).map(s => ({ symbol:s, open:openCache[s], price:seenPx[s], volume:0, avgVolume:0, marketCap:0, chg:0, prevClose:prevCache[s] || 0 }));
 }
 async function poll() {
   if (busy) return;
@@ -606,12 +694,13 @@ async function poll() {
       const prev = lastPrice[q.symbol];
       return { ...q, surge, tier:tierOf(surge, q.price, prev) };
     });
-    let ring = false;
+    let ring = false; const fresh = [];
     rows.forEach(r => {
-      if (r.tier === 'sniper' && lastTier[r.symbol] !== 'sniper') ring = true;
+      if (r.tier === 'sniper' && lastTier[r.symbol] !== 'sniper') { ring = true; fresh.push(r); }
       lastTier[r.symbol] = r.tier; lastPrice[r.symbol] = r.price;
     });
     if (ring) beep();
+    try { journalTrack(rows, fresh); } catch (e) {}
     lastRows = rows; render(rows);
     setLive(true, etParts().str + ' · ' + rows.length);
   } catch (e) {
@@ -621,7 +710,7 @@ async function poll() {
 }
 function startRadar() {
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
-  lastPrice = {}; lastTier = {}; openCache = {}; seenPx = {}; tickN = 0; rrN = 0;
+  lastPrice = {}; lastTier = {}; openCache = {}; seenPx = {}; prevCache = {}; tickN = 0; rrN = 0;
   const b = $('btnRadar'); b.textContent = '■ 停止雷达'; b.className = 'btn btn-stop text-base';
   setLive(true, '连接中');
   const ms = freeMode() ? 8000 : 3000;
@@ -635,6 +724,7 @@ function stopRadar() {
 }
 
 function render(rows) {
+  $('sortBar').classList.add('hidden');
   const cap = getCap();
   const sorted = [...rows].sort((a, b) => TIERS[b.tier].rank - TIERS[a.tier].rank || b.surge - a.surge);
   $('cards').innerHTML = sorted.map(r => {
@@ -685,7 +775,7 @@ $('cards').addEventListener('click', async e => {
   else if (act === 'rm') {
     setSyms(parseSyms().filter(x => x !== v));
     lastRows = lastRows.filter(r => r.symbol !== v); delete lastPrice[v]; delete lastTier[v];
-    if (lastRows.length) render(lastRows); else $('cards').innerHTML = '';
+    if (lastRows.length) render(lastRows); else renderPreview();
     toast(`已剔除 ${v}`, 1400);
   }
 });
@@ -755,9 +845,174 @@ $('btnTok').addEventListener('click', () => adminAction($('btnTok'), async () =>
   const { vault, sha } = await ghRead();
   vault.data = await sealJson(S.dek, { token:t, limit:S.limit, admin:S.user });
   await ghWrite(vault, sha, 'update key');
-  S.token = t; const ss = JSON.parse(sessionStorage.getItem(SS) || '{}'); ss.token = t; sessionStorage.setItem(SS, JSON.stringify(ss));
+  S.token = t; const ss = JSON.parse(sessionStorage.getItem(SS) || '{}'); ss.token = t; sessionStorage.setItem(SS, JSON.stringify(ss)); if (localStorage.getItem(PS)) keepSave(ss).catch(() => {});
   $('nTok').value = '';
 }, 'API Key 已更新，约 1 分钟后生效'));
+
+/*JOURNAL-START*/
+/* ---------- 交易记录：自动记录狙击信号并模拟结果（信号价×1.003 买入，+7% 止盈，−3% 止损，09:45 ET 清仓） ---------- */
+const K_J = 'sc_journal';
+const fmtD = new Intl.DateTimeFormat('en-CA', { timeZone:'America/New_York' });
+const etDate = () => fmtD.format(new Date());
+let JC = null;
+function jLoad() { if (JC) return JC; try { JC = JSON.parse(localStorage.getItem(K_J)) || []; } catch (e) { JC = []; } return JC; }
+function jSave(J) { JC = J.slice(-2000); try { localStorage.setItem(K_J, JSON.stringify(JC)); } catch (e) {} }
+function previewOf(sym) {
+  try { const pv = JSON.parse(localStorage.getItem('sc_prev')); const x = (pv.items || []).find(i => i.symbol === sym); if (x) return x; } catch (e) {}
+  return {};
+}
+function journalTrack(rows, fresh) {
+  const J = jLoad(), today = etDate(), p = etParts(), t = p.h * 60 + p.m; let ch = false;
+  const byS = {}; rows.forEach(r => byS[r.symbol] = r);
+  fresh.forEach(r => {
+    if (t < 573 || t > 582) return;
+    if (J.some(x => x.date === today && x.sym === r.symbol)) return;
+    const pv = previewOf(r.symbol);
+    J.push({ id:Date.now() + r.symbol, date:today, sym:r.symbol, t:p.str, sigPx:r.price, entry:r.price * 1.003, tp:r.price * 1.07, sl:r.price * 0.97,
+      open:r.open, surge:r.surge, gap:r.prevClose > 0 ? (r.open / r.prevClose - 1) * 100 : null,
+      cap:r.marketCap || pv.cap || 0, chg:pv.chg || null, rvol:pv.rvol || 0, fb:FALLBACK.includes(r.symbol),
+      status:'open', exit:null, hi:r.price, lo:r.price, last:r.price, actual:null });
+    ch = true;
+  });
+  J.forEach(x => {
+    if (x.status !== 'open' || x.date !== today) return;
+    const r = byS[x.sym]; if (!r) return;
+    x.last = r.price; x.hi = Math.max(x.hi, r.price); x.lo = Math.min(x.lo, r.price);
+    if (r.price >= x.tp) { x.status = 'TP'; x.exit = x.tp; }
+    else if (r.price <= x.sl) { x.status = 'SL'; x.exit = x.sl; }
+    ch = true;
+  });
+  if (ch) jSave(J);
+}
+function settleOpen() {
+  const J = jLoad(); if (!J.some(x => x.status === 'open')) return;
+  const today = etDate(), p = etParts(), t = p.h * 60 + p.m; let ch = false;
+  J.forEach(x => { if (x.status === 'open' && (x.date < today || t >= 585)) { x.status = 'TIME'; x.exit = x.last || x.sigPx; ch = true; } });
+  if (ch) jSave(J);
+}
+const pnlPct = r => r.actual != null ? r.actual : (r.exit && r.entry ? (r.exit / r.entry - 1) * 100 : null);
+function summarize(list) {
+  const ps = list.map(pnlPct).filter(v => v != null && isFinite(v)), n = ps.length;
+  if (!n) return { n:0 };
+  const w = ps.filter(v => v > 0), l = ps.filter(v => v <= 0), sw = w.reduce((a, b) => a + b, 0), sl = -l.reduce((a, b) => a + b, 0);
+  const avgW = w.length ? sw / w.length : 0, avgL = l.length ? sl / l.length : 0;
+  return { n, win:w.length / n * 100, avgW, avgL, payoff:avgL > 0 ? avgW / avgL : (avgW > 0 ? Infinity : 0), exp:(sw - sl) / n };
+}
+const minOf = x => { const [h, m] = x.t.split(':'); return +h * 60 + +m; };
+const DIMS = [
+  { name:'信号时的涨幅', f:r => r.surge, b:[['2.5–3.3%', v => v < 3.3], ['3.3–4.1%', v => v < 4.1], ['4.1–4.8%', v => true]] },
+  { name:'信号时间 (ET)', f:r => minOf(r), b:[['09:33–09:35', v => v <= 575], ['09:36–09:38', v => v <= 578], ['09:39–09:42', v => true]] },
+  { name:'进场价', f:r => r.entry, b:[['< $5', v => v < 5], ['$5–10', v => v < 10], ['$10–20', v => v < 20], ['$20–60', v => true]] },
+  { name:'市值', f:r => r.cap || null, b:[['< 5 亿', v => v < 5e8], ['5–20 亿', v => v < 2e9], ['20–80 亿', v => true]] },
+  { name:'开盘跳空', f:r => r.gap, b:[['< 3%', v => v < 3], ['3–10%', v => v < 10], ['10–25%', v => v < 25], ['> 25%', v => true]] },
+  { name:'选股时涨幅', f:r => r.chg || null, b:[['< 10%', v => v < 10], ['10–25%', v => v < 25], ['> 25%', v => true]] },
+  { name:'选股时相对量', f:r => r.rvol || null, b:[['< 1.2×', v => v < 1.2], ['1.2–2×', v => v < 2], ['> 2×', v => true]] },
+  { name:'来源', f:r => r.fb ? 1 : 0, b:[['筛选池', v => v === 0], ['保底池', v => true]] }
+];
+function analyze(closed) {
+  return DIMS.map(d => {
+    const rows = d.b.map(([label]) => ({ label, list:[] }));
+    closed.forEach(r => { const v = d.f(r); if (v == null || !isFinite(v)) return; const i = d.b.findIndex(([, test]) => test(v)); if (i >= 0) rows[i].list.push(r); });
+    rows.forEach(x => x.s = summarize(x.list));
+    const ok = rows.filter(x => x.s.n >= 5);
+    const best = ok.length >= 2 ? ok.reduce((a, b) => b.s.exp > a.s.exp ? b : a) : null;
+    return { name:d.name, rows, best };
+  }).filter(d => d.rows.some(x => x.s.n > 0));
+}
+const avgOf = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+function symStats(closed) {
+  const g = {}; closed.forEach(r => (g[r.sym] = g[r.sym] || []).push(r));
+  const out = {};
+  for (const k in g) {
+    const L = g[k];
+    out[k] = { n:L.length, s:summarize(L), mfe:avgOf(L.map(r => (r.hi / r.entry - 1) * 100)), mae:avgOf(L.map(r => (r.lo / r.entry - 1) * 100)),
+      range:avgOf(L.map(r => (r.hi - r.lo) / r.entry * 100)), last:L[L.length - 1].date };
+  }
+  return out;
+}
+function flagsOf(x, h) {
+  const f = [];
+  if (x.chg >= 25) f.push(['🔥过热', 'bg-orange-400/20 text-orange-300']);
+  if (x.cap > 0 && x.cap < 3e8) f.push(['🪙小市值', 'bg-amber-300/15 text-amber-200']);
+  if (h && h.n >= 2 && h.range >= 8) f.push(['⚡波动大', 'bg-sky-400/15 text-sky-300']);
+  if (h && h.n >= 3) { if (h.s.exp < 0) f.push(['⚠历史差', 'bg-rose-400/20 text-rose-300']); else if (h.s.win >= 50) f.push(['✅历史好', 'bg-emerald-400/20 text-emerald-300']); }
+  return f;
+}
+/*JOURNAL-END*/
+
+const fmtP = (v, d = 1) => (v >= 0 ? '+' : '') + v.toFixed(d) + '%';
+let logTab = 'stat';
+function renderJournal() {
+  const J = jLoad(), closed = J.filter(x => x.status !== 'open'), open = J.length - closed.length;
+  $('tabStat').className = 'btn text-sm ' + (logTab === 'stat' ? 'btn-violet' : 'btn-ghost');
+  $('tabSym').className = 'btn text-sm ' + (logTab === 'sym' ? 'btn-violet' : 'btn-ghost');
+  $('tabRec').className = 'btn text-sm ' + (logTab === 'rec' ? 'btn-violet' : 'btn-ghost');
+  const body = $('logBody');
+  if (!J.length) { body.innerHTML = '<div class="text-slate-400 leading-relaxed">还没有记录。雷达运行时，每出现一次狙击信号会自动记录并模拟结果，积累后这里会显示各条件的胜率和盈亏比。</div>'; return; }
+  if (logTab === 'rec') {
+    body.innerHTML = [...J].reverse().map(x => {
+      const pp = pnlPct(x), col = x.status === 'open' ? 'bg-white/10 text-slate-300' : pp > 0 ? 'bg-emerald-400 text-black' : 'bg-rose-400 text-black';
+      const lab = { open:'进行中', TP:'止盈', SL:'止损', TIME:'到时' }[x.status];
+      return `<div class="rounded-xl bg-black/25 px-3 py-2 flex items-center gap-2">
+        <div class="flex-1 min-w-0"><div><b>${x.sym}</b> <span class="text-xs text-slate-500">${x.date} ${x.t}</span></div>
+        <div class="text-xs text-slate-400 num">入 ${f2(x.entry)} → ${x.exit ? '出 ' + f2(x.exit) : '最新 ' + f2(x.last)} · 信号涨幅 ${f2(x.surge)}%${x.actual != null ? ' · 实际' : ''}</div></div>
+        <span class="px-2 py-0.5 rounded-full text-[11px] font-bold ${col}">${lab}${pp != null ? ' ' + fmtP(pp) : ''}</span>
+        <button data-jact="act" data-id="${x.id}" class="text-slate-400 hover:text-white px-1" title="填写实际盈亏">✎</button>
+        <button data-jact="del" data-id="${x.id}" class="text-slate-500 hover:text-rose-400 px-1">×</button></div>`;
+    }).join('');
+    return;
+  }
+  if (logTab === 'sym') {
+    const H = symStats(closed), ks = Object.keys(H).sort((a, b) => (H[b].s.exp || 0) - (H[a].s.exp || 0) || H[b].n - H[a].n);
+    if (!ks.length) { body.innerHTML = '<div class="text-slate-400">还没有已完成的记录。</div>'; return; }
+    body.innerHTML = `<div class="rounded-2xl bg-white/5 border border-white/10 p-4">
+      <div class="grid grid-cols-[1fr_.5fr_.7fr_.8fr_1.3fr] gap-x-2 gap-y-2 text-xs items-center">
+        <span class="text-slate-500">代码</span><span class="text-slate-500">笔数</span><span class="text-slate-500">胜率</span><span class="text-slate-500">期望</span><span class="text-slate-500">均最高 / 回撤</span>
+        ${ks.map(k => { const h = H[k], fl = flagsOf({}, h).map(f => f[0].slice(0, 2)).join('');
+          return `<span><b>${k}</b> ${fl}</span><span class="num ${h.n < 3 ? 'text-slate-500' : ''}">${h.n}</span><span class="num">${h.s.n ? h.s.win.toFixed(0) + '%' : '—'}</span><span class="num ${h.s.exp >= 0 ? 'text-emerald-300' : 'text-rose-400'}">${h.s.n ? fmtP(h.s.exp, 1) : '—'}</span><span class="num text-slate-300">${fmtP(h.mfe, 1)} / ${fmtP(h.mae, 1)}</span>`; }).join('')}
+      </div></div>
+      <div class="text-xs text-slate-500 leading-relaxed">按期望从高到低排列。不足 3 笔的数字（灰色）不要当结论。「均最高 / 回撤」是信号后价格平均最高涨到多少、最低跌到多少（相对进场价）。如果均最高远低于 +7%，说明止盈定得偏高。</div>`;
+    return;
+  }
+  const all = summarize(closed), A = analyze(closed);
+  const cell = (s, best) => s.n ? `<span class="num">${s.win.toFixed(0)}%</span><span class="num">${isFinite(s.payoff) ? s.payoff.toFixed(2) : '∞'}</span><span class="num ${s.exp >= 0 ? 'text-emerald-300' : 'text-rose-400'}">${fmtP(s.exp, 2)}</span>` : '<span>—</span><span>—</span><span>—</span>';
+  let h = `<div class="rounded-2xl bg-white/5 border border-white/10 p-4 space-y-2">
+    <div class="flex items-center justify-between"><span class="text-slate-400">总览</span><span class="num text-xs text-slate-500">已完成 ${closed.length} 笔${open ? ' · 进行中 ' + open : ''}</span></div>
+    ${all.n ? `<div class="grid grid-cols-4 gap-2 text-center">
+      <div><div class="text-[10px] text-slate-500">胜率</div><div class="font-bold num">${all.win.toFixed(0)}%</div></div>
+      <div><div class="text-[10px] text-slate-500">盈亏比</div><div class="font-bold num">${isFinite(all.payoff) ? all.payoff.toFixed(2) : '∞'}</div></div>
+      <div><div class="text-[10px] text-slate-500">平均盈 / 亏</div><div class="font-bold num text-xs leading-6">${fmtP(all.avgW)} / −${all.avgL.toFixed(1)}%</div></div>
+      <div><div class="text-[10px] text-slate-500">每笔期望</div><div class="font-bold num ${all.exp >= 0 ? 'text-emerald-300' : 'text-rose-400'}">${fmtP(all.exp, 2)}</div></div></div>` : ''}
+    ${closed.length ? `<div class="text-xs text-slate-400 num">信号后平均最高 ${fmtP(avgOf(closed.map(r => (r.hi / r.entry - 1) * 100)), 1)} · 平均最大回撤 ${fmtP(avgOf(closed.map(r => (r.lo / r.entry - 1) * 100)), 1)}</div>` : ''}
+    ${closed.length < 30 ? `<div class="text-xs text-amber-300/90">样本只有 ${closed.length} 笔，不足 30 笔时结论很可能只是运气，先继续记录。</div>` : ''}</div>`;
+  const crowns = A.filter(d => d.best).map(d => `<li><b>${d.name}</b>：${d.best.label}（胜率 ${d.best.s.win.toFixed(0)}%，盈亏比 ${isFinite(d.best.s.payoff) ? d.best.s.payoff.toFixed(2) : '∞'}，期望 ${fmtP(d.best.s.exp, 2)}，${d.best.s.n} 笔）</li>`);
+  h += `<div class="rounded-2xl bg-white/5 border border-white/10 p-4"><div class="text-slate-400 mb-2">各维度表现最好的区间（每区间至少 5 笔）</div>${crowns.length ? `<ul class="space-y-1.5 text-xs leading-relaxed list-disc pl-4">${crowns.join('')}</ul>` : '<div class="text-xs text-slate-500">暂无足够样本。</div>'}</div>`;
+  A.forEach(d => {
+    h += `<div class="rounded-2xl bg-white/5 border border-white/10 p-4"><div class="text-slate-400 mb-2">${d.name}</div>
+      <div class="grid grid-cols-[1.3fr_.5fr_.7fr_.7fr_.9fr] gap-x-2 gap-y-1.5 text-xs items-center"><span class="text-slate-500">区间</span><span class="text-slate-500">笔数</span><span class="text-slate-500">胜率</span><span class="text-slate-500">盈亏比</span><span class="text-slate-500">期望</span>
+      ${d.rows.map(x => `<span>${x === d.best ? '👑 ' : ''}${x.label}</span><span class="num ${x.s.n < 5 && x.s.n ? 'text-slate-500' : ''}">${x.s.n}</span>${cell(x.s)}`).join('')}</div></div>`;
+  });
+  body.innerHTML = h;
+}
+$('btnLog').addEventListener('click', () => { renderJournal(); openM('logModal'); });
+$('tabStat').addEventListener('click', () => { logTab = 'stat'; renderJournal(); });
+$('tabRec').addEventListener('click', () => { logTab = 'rec'; renderJournal(); });
+$('tabSym').addEventListener('click', () => { logTab = 'sym'; renderJournal(); });
+$('logBody').addEventListener('click', e => {
+  const b = e.target.closest('[data-jact]'); if (!b) return;
+  const J = jLoad(), i = J.findIndex(x => x.id === b.dataset.id); if (i < 0) return;
+  if (b.dataset.jact === 'del') { if (confirm('删除这条记录？')) { J.splice(i, 1); jSave(J); renderJournal(); } return; }
+  const v = prompt('你的实际盈亏 %（例如 4.5 或 -3；留空 = 用模拟结果）', J[i].actual != null ? J[i].actual : '');
+  if (v === null) return;
+  const n = parseFloat(v); J[i].actual = v.trim() === '' || !isFinite(n) ? null : n; jSave(J); renderJournal();
+});
+$('btnClr').addEventListener('click', () => { if (confirm('清空全部交易记录？此操作不可恢复')) { jSave([]); renderJournal(); } });
+$('btnCsv').addEventListener('click', () => {
+  const J = jLoad(); if (!J.length) return toast('没有记录可导出');
+  const cols = ['date', 't', 'sym', 'sigPx', 'entry', 'tp', 'sl', 'open', 'surge', 'gap', 'cap', 'chg', 'rvol', 'fb', 'status', 'exit', 'hi', 'lo', 'actual'];
+  const csv = [cols.join(',')].concat(J.map(x => cols.map(c => x[c] ?? '').join(','))).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type:'text/csv' })); a.download = 'scanner-journal.csv'; a.click();
+});
 
 /* ---------- 初始化 ---------- */
 let inited = false;
@@ -766,7 +1021,7 @@ function initApp() {
   $('capital').value = localStorage.getItem(LS.cap) || localStorage.getItem('fmp_capital') || 500;
   $('symbols').value = localStorage.getItem(LS.sym) || localStorage.getItem('radar_symbols') || FALLBACK.join(', ');
   $('symCount').textContent = parseSyms().length;
-  $('symbols').addEventListener('input', saveSyms);
+  $('symbols').addEventListener('input', () => { saveSyms(); if (!timer && !lastRows.length) renderPreview(); });
   $('capital').addEventListener('input', e => { localStorage.setItem(LS.cap, e.target.value); if (lastRows.length) render(lastRows); });
   $('btnFetch').addEventListener('click', fetchTop20);
   $('btnRadar').addEventListener('click', () => timer ? stopRadar() : startRadar());
@@ -777,6 +1032,7 @@ function initApp() {
     lastRows = [];
   });
   renderUsage(); tickClock(); setInterval(tickClock, 1000);
+  renderPreview();
 }
 
 (async function boot() {
@@ -784,6 +1040,8 @@ function initApp() {
     const sv = JSON.parse(sessionStorage.getItem(SS));
     if (sv && sv.token) { enter(sv); return; }
   } catch (e) {}
+  const kv = await keepLoad();
+  if (kv && kv.token) { sessionStorage.setItem(SS, JSON.stringify(kv)); keepSave(kv).catch(() => {}); enter(kv); return; }
   try {
     const r = await fetch('vault.json', { cache:'no-store' });
     if (r.status === 404) { showSetup(); return; }
