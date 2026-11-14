@@ -395,6 +395,7 @@ function saveSyms() { localStorage.setItem(LS.sym, $('symbols').value); $('symCo
 const f2 = n => (isFinite(n) ? n.toFixed(2) : '--');
 
 function toast(msg, ms = 2400) {
+  msg = String(msg); if (msg.length > 220) msg = msg.slice(0, 217) + '…';
   const d = document.createElement('div');
   d.className = 'pointer-events-auto glass px-4 py-2.5 text-sm shadow-2xl max-w-sm text-center';
   d.textContent = msg; $('toasts').appendChild(d);
@@ -470,9 +471,14 @@ function normQ(q) {
     chg: +(q.changesPercentage ?? q.changePercentage ?? 0)
   };
 }
+/* 免费版只能查询少数几只股票的报价（其余返回 402 "symbol not available"）：改用涨幅榜实时价格 */
+const K_SYM = 'sc_symlim';
+const symLimited = () => localStorage.getItem(K_SYM) === '1';
+const isSymRestricted = m => /not available under your current subscription|Premium Query Parameter/i.test(m || '');
 /* 免费版常不支持 batch-quote：自动改为逐只 quote?symbol=（每只 1 次请求，耗额度） */
 async function getQuotes(symbols) {
   const out = [];
+  if (symLimited()) return out;
   if (localStorage.getItem(K_NB) !== '1') {
     for (let i = 0; i < symbols.length; i += 40) {
       const d = await api('quote', symbols.slice(i, i + 40).join(','));
@@ -484,7 +490,7 @@ async function getQuotes(symbols) {
   if (symbols.length > 25) symbols = symbols.slice(0, 25);  // 逐只模式限制数量，避免烧光额度
   const res = await Promise.all(symbols.map(async sym => {
     try { const d = await getJson(`${BS}/quote?symbol=${encodeURIComponent(sym)}`); return d[0] ? normQ(d[0]) : null; }
-    catch (e) { if (!/HTTP 4(00|04)/.test(e.message)) noteErr('quote/' + sym, e.message); return null; }
+    catch (e) { if (isSymRestricted(e.message)) { localStorage.setItem(K_SYM, '1'); return null; } if (!/HTTP 4(00|04)/.test(e.message)) noteErr('quote/' + sym, e.message.slice(0, 60)); return null; }
   }));
   const ok = res.filter(Boolean);
   if (ok.length && localStorage.getItem(K_NB) !== '1') { localStorage.setItem(K_NB, '1'); toast('当前套餐不支持批量报价，已改为逐只请求（每次刷新消耗 ' + symbols.length + ' 次 API）', 6000); }
@@ -499,21 +505,21 @@ async function diag() {
     ['stable 单个报价', `${BS}/quote?symbol=AAPL`],
     ['stable 批量报价', `${BS}/batch-quote?symbols=AAPL,MSFT`],
     ['stable 涨幅榜', `${BS}/biggest-gainers`],
-    ['v3 批量报价(旧)', `${B3}/quote/AAPL,MSFT`]
+    ['stable 小盘股报价(SOUN)', `${BS}/quote?symbol=SOUN`]
   ];
   const lines = []; out.textContent = '测试中…';
   for (const [n, u] of tests) {
-    try { const d = await getJson(u); lines.push(`${d.length ? '✅' : '⚠️'} ${n}：${d.length} 条`); }
-    catch (e) { lines.push(`❌ ${n}：${e.message}`); if (/批量/.test(n) && /stable/.test(n) && /402/.test(e.message)) { localStorage.setItem(K_NB, '1'); lines.push('→ 已切换为省流模式'); } }
+    try { const d = await getJson(u); lines.push(`${d.length ? '✅' : '⚠️'} ${n}：${d.length} 条`); if (/SOUN/.test(n) && d.length) { localStorage.removeItem(K_SYM); lines.push('→ 可查小盘股报价'); } }
+    catch (e) { lines.push(`❌ ${n}：${e.message}`); if (/SOUN/.test(n) && isSymRestricted(e.message)) { localStorage.setItem(K_SYM, '1'); lines.push('→ 已切换为涨幅榜模式'); } if (/批量/.test(n) && /stable/.test(n) && /402/.test(e.message)) { localStorage.setItem(K_NB, '1'); lines.push('→ 已切换为省流模式'); } }
     out.textContent = lines.join('\n');
   }
 }
 
 /* ---------- 名单预览（抓取后立即显示，雷达启动后被实时卡片取代） ---------- */
 const K_PREV = 'sc_prev';
-function savePreview(final, quotes) {
+function savePreview(final, quotes, relaxed) {
   const m = {}; (quotes || []).forEach(q => m[q.symbol] = q);
-  const items = final.map(sym => { const q = m[sym]; return { symbol:sym, price:q ? q.price : 0, chg:q ? q.chg : 0, cap:q ? q.marketCap : 0, rvol:q && q.avgVolume > 0 ? q.volume / q.avgVolume : 0 }; });
+  const items = final.map(sym => { const q = m[sym]; return { symbol:sym, price:q ? q.price : 0, chg:q ? q.chg : 0, cap:q ? q.marketCap : 0, rvol:q && q.avgVolume > 0 ? q.volume / q.avgVolume : 0, relaxed:!!(relaxed && relaxed.has(sym)) }; });
   try { localStorage.setItem(K_PREV, JSON.stringify({ d:dayKey(), items })); } catch (e) {}
 }
 const K_SORT = 'sc_sort';
@@ -560,27 +566,62 @@ async function fetchTop20() {
   try {
     btn.textContent = '⏳ 1/3 榜单…';
     const [g, a] = await Promise.all([api('gainers'), api('actives')]);
-    const cand = [...new Set([...g, ...a].filter(x => { const pr = +x.price; return !pr || (pr >= 2 && pr <= 60); }).map(x => (x.symbol || x.ticker || '').toUpperCase()).filter(s => /^[A-Z]{1,5}$/.test(s)))]
-      .slice(0, localStorage.getItem(K_NB) === '1' ? 25 : 80);
-    if (!cand.length) throw new Error(lastErr || '榜单无数据（检查套餐权限）');
+    const raw = [...g, ...a];
+    if (!raw.length) throw new Error(lastErr || '榜单无数据（检查套餐权限）');
+    /* 初筛：美股主板代码、价格 2–60、剔除场外；按榜单涨幅从高到低取前 N 只去查报价 */
+    const info = {};
+    raw.forEach(x => {
+      const sy = (x.symbol || x.ticker || '').toUpperCase();
+      if (!/^[A-Z]{1,5}$/.test(sy) || info[sy]) return;
+      info[sy] = { price:+x.price || 0, chg:+(x.changesPercentage ?? x.changePercentage ?? 0) || 0, ex:String(x.exchange || x.exchangeShortName || '') };
+    });
+    let nOtc = 0, nPrice = 0;
+    const pool = Object.keys(info).filter(sy => {
+      const i = info[sy];
+      if (/OTC|PNK|PINK|CRYPTO/i.test(i.ex)) { nOtc++; return false; }
+      if (i.price && (i.price < 2 || i.price > 60)) { nPrice++; return false; }
+      return true;
+    }).sort((x, y) => info[y].chg - info[x].chg);
+    const cand = pool.slice(0, localStorage.getItem(K_NB) === '1' ? 25 : 80);
+    if (!cand.length) throw new Error('榜单 ' + Object.keys(info).length + ' 只，初筛后没有符合价格 $2–60 的股票');
+    /* 先用 1 次请求探测：套餐是否允许查询小盘股报价 */
+    if (!symLimited()) {
+      try { await getJson(`${BS}/quote?symbol=${encodeURIComponent(cand[0])}`); }
+      catch (e) { if (isSymRestricted(e.message)) localStorage.setItem(K_SYM, '1'); }
+    }
+    if (symLimited()) {
+      const top = pool.slice(0, 20);
+      setSyms(top);
+      savePreview(top, top.map(sy => ({ symbol:sy, price:info[sy].price, chg:info[sy].chg, marketCap:0, avgVolume:0, volume:0 })), new Set());
+      if (!timer) renderPreview();
+      toast(`涨幅榜模式（免费版无法查询小盘股报价，无法按市值和相对量筛选）：榜单 ${Object.keys(info).length} 只 → 去掉场外 ${nOtc}、价格不符 ${nPrice} → 取涨幅最大的 ${top.length} 只。请去 eToro 确认`, 9000);
+      return;
+    }
     btn.textContent = `⏳ 2/3 快照 ${cand.length}…`;
     const quotes = await getQuotes(cand);
+    if (!quotes.length) throw new Error(lastErr || '报价为空');
     btn.textContent = '⏳ 3/3 筛选…';
-    let noAvg = 0;
-    const passed = quotes.filter(q => {
-      if (q.marketCap < 150e6 || q.marketCap > 8e9) return false;
-      if (q.price < 2 || q.price > 60) return false;
-      if (q.avgVolume > 0) return q.volume / q.avgVolume >= 1.2;
-      noAvg++; return true;
-    }).map(q => ({ ...q, rvol: q.avgVolume > 0 ? q.volume / q.avgVolume : 1 }));
-    passed.sort((x, y) => (y.chg + Math.min(y.rvol, 10) * 2) - (x.chg + Math.min(x.rvol, 10) * 2));
-    const final = [...new Set([...passed.slice(0, 15).map(q => q.symbol), ...FALLBACK])].slice(0, 20);
+    /* 严格：价格 + 市值(未知则放行) + 相对量(未知则放行)；宽松：只因市值超出区间被剔除的，按涨幅补位 */
+    const cnt = { price:0, cap:0, rvol:0 }, strict = [], relaxed = [];
+    quotes.forEach(q => {
+      q.chg = q.chg || (info[q.symbol] ? info[q.symbol].chg : 0);
+      q.rvol = q.avgVolume > 0 ? q.volume / q.avgVolume : 1;
+      if (q.price < 2 || q.price > 60) { cnt.price++; return; }
+      if (q.avgVolume > 0 && q.rvol < 1.2) { cnt.rvol++; return; }
+      if (q.marketCap > 0 && (q.marketCap < 150e6 || q.marketCap > 8e9)) { cnt.cap++; relaxed.push(q); return; }
+      strict.push(q);
+    });
+    const score = q => q.chg + Math.min(q.rvol, 10) * 2;
+    strict.sort((x, y) => score(y) - score(x)); relaxed.sort((x, y) => score(y) - score(x));
+    const pick = strict.slice(0, 15), fillN = Math.max(0, Math.min(15 - pick.length, relaxed.length));
+    const fill = relaxed.slice(0, fillN);
+    const final = [...new Set([...pick, ...fill].map(q => q.symbol).concat(FALLBACK))].slice(0, 20);
     setSyms(final);
-    savePreview(final, quotes);
+    savePreview(final, quotes, new Set(fill.map(q => q.symbol)));
     if (!timer) renderPreview();
-    toast(`候选 ${cand.length} → 通过 ${passed.length} → 名单 ${final.length} 只${noAvg ? `（${noAvg} 只无均量数据未过滤）` : ''}，请去 eToro 确认`, 5200);
+    toast(`榜单 ${Object.keys(info).length} 只 → 初筛 ${pool.length}（场外 ${nOtc}、价格不符 ${nPrice}）→ 查报价 ${quotes.length} → 严格通过 ${strict.length}、市值不符补位 ${fill.length}、量能不足 ${cnt.rvol}。名单 ${final.length} 只，请去 eToro 确认`, 9000);
   } catch (e) {
-    toast('抓取失败：' + e.message, 5200);
+    toast('抓取失败：' + e.message, 6000);
   } finally { btn.disabled = false; btn.textContent = label; }
 }
 
@@ -650,20 +691,39 @@ function setLive(on, txt) {
   $('liveTxt').textContent = txt;
 }
 let openCache = {}, seenPx = {}, prevCache = {}, tickN = 0, rrN = 0, busy = false;
-const freeMode = () => localStorage.getItem(K_NB) === '1';
+const freeMode = () => localStorage.getItem(K_NB) === '1' || localStorage.getItem('sc_symlim') === '1';
 async function quoteOne(sym) {
   const d = await getJson(`${BS}/quote?symbol=${encodeURIComponent(sym)}`);
   return d[0] ? normQ(d[0]) : null;
 }
 /* 省流模式（免费版）：开盘价每只只查 1 次；之后每轮 1 次涨幅榜 + 隔轮轮询 1 只；仅在 09:30–09:46 ET 工作 */
+/* 涨幅榜模式：每轮只请求 1 次涨幅榜；基准价 = 09:30 后首次看到的价格（≈开盘价） */
+async function fetchRowsG(syms) {
+  const g = await api('gainers');
+  if (!g.length) throw new Error(lastErr || '涨幅榜为空');
+  const map = {};
+  g.forEach(x => { const sy = (x.symbol || '').toUpperCase(); map[sy] = { price:+x.price || 0, chg:+(x.changesPercentage ?? x.changePercentage ?? 0) || 0 }; });
+  let seen = 0;
+  syms.forEach(sy => {
+    const m = map[sy]; if (!m || !(m.price > 0)) return;
+    seen++;
+    if (!openCache[sy]) { openCache[sy] = m.price; prevCache[sy] = m.chg > -99 ? m.price / (1 + m.chg / 100) : 0; }
+    seenPx[sy] = m.price;
+  });
+  setLive(true, `${etParts().str} · 在榜 ${seen}/${syms.length}`);
+  return syms.filter(sy => openCache[sy] && seenPx[sy]).map(sy => ({ symbol:sy, open:openCache[sy], price:seenPx[sy], volume:0, avgVolume:0, marketCap:0, chg:0, prevClose:prevCache[sy] || 0 }));
+}
 async function fetchRows(syms) {
   const p = etParts(), t = p.h * 60 + p.m;
   if (t < 570) { setLive(true, '等待开盘 09:30 ET'); return null; }
   if (t > 586) { setLive(true, '窗口已结束，未消耗额度'); return null; }
+  if (symLimited()) return fetchRowsG(syms);
   const need = syms.filter(s => !openCache[s]);
   if (need.length) {
+    try { const q0 = await quoteOne(need[0]); if (q0 && q0.open > 0) { openCache[need[0]] = q0.open; seenPx[need[0]] = q0.price; prevCache[need[0]] = q0.prevClose; } }
+    catch (e) { if (isSymRestricted(e.message)) { localStorage.setItem(K_SYM, '1'); return fetchRowsG(syms); } }
     setLive(true, `读取开盘价 ${need.length}`);
-    await Promise.all(need.map(async s => {
+    await Promise.all(need.slice(1).map(async s => {
       try { const q = await quoteOne(s); if (q && q.open > 0) { openCache[s] = q.open; seenPx[s] = q.price; prevCache[s] = q.prevClose; } } catch (e) { noteErr('quote/' + s, e.message); }
     }));
   }
@@ -713,8 +773,9 @@ function startRadar() {
   lastPrice = {}; lastTier = {}; openCache = {}; seenPx = {}; prevCache = {}; tickN = 0; rrN = 0;
   const b = $('btnRadar'); b.textContent = '■ 停止雷达'; b.className = 'btn btn-stop text-base';
   setLive(true, '连接中');
-  const ms = freeMode() ? 8000 : 3000;
-  if (freeMode()) toast('省流模式：每 8 秒刷新，仅 09:30–09:46 ET 消耗额度', 5000);
+  const ms = symLimited() ? 6000 : freeMode() ? 8000 : 3000;
+  if (symLimited()) toast('涨幅榜模式：每 6 秒刷新；基准价取 09:30 后首次看到的价格，请在 09:30 ET 准时启动；不在涨幅榜前 50 的股票没有数据', 7000);
+  else if (freeMode()) toast('省流模式：每 8 秒刷新，仅 09:30–09:46 ET 消耗额度', 5000);
   poll(); timer = setInterval(poll, ms);
 }
 function stopRadar() {
@@ -933,6 +994,7 @@ function symStats(closed) {
 function flagsOf(x, h) {
   const f = [];
   if (x.chg >= 25) f.push(['🔥过热', 'bg-orange-400/20 text-orange-300']);
+  if (x.relaxed) f.push(['📌超出市值区间', 'bg-violet-400/20 text-violet-300']);
   if (x.cap > 0 && x.cap < 3e8) f.push(['🪙小市值', 'bg-amber-300/15 text-amber-200']);
   if (h && h.n >= 2 && h.range >= 8) f.push(['⚡波动大', 'bg-sky-400/15 text-sky-300']);
   if (h && h.n >= 3) { if (h.s.exp < 0) f.push(['⚠历史差', 'bg-rose-400/20 text-rose-300']); else if (h.s.win >= 50) f.push(['✅历史好', 'bg-emerald-400/20 text-emerald-300']); }
