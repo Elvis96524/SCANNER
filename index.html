@@ -690,7 +690,17 @@ function setLive(on, txt) {
   $('liveDot').className = 'w-2 h-2 rounded-full ' + (on ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600');
   $('liveTxt').textContent = txt;
 }
-let openCache = {}, seenPx = {}, prevCache = {}, tickN = 0, rrN = 0, busy = false;
+let openCache = {}, seenPx = {}, prevCache = {}, pxAt = {}, tickN = 0, rrN = 0, busy = false;
+const K_DBG = 'sc_dbg';
+function dbgLoad() { let d = null; try { d = JSON.parse(localStorage.getItem(K_DBG)); } catch (e) {} const today = etDate(); return d && d.d === today ? d : { d:today, start:'', polls:0, max:0, sym:'', last:'', n:0, err:'' }; }
+function dbgUpdate(rows, err) {
+  const d = dbgLoad(), p = etParts();
+  if (!d.start) d.start = p.str;
+  if (rows.length || !err) { d.polls++; d.last = p.str; d.n = rows.length; }
+  rows.forEach(r => { if (r.surge > d.max) { d.max = r.surge; d.sym = r.symbol; } });
+  if (err) d.err = err;
+  try { localStorage.setItem(K_DBG, JSON.stringify(d)); } catch (e) {}
+}
 const freeMode = () => localStorage.getItem(K_NB) === '1' || localStorage.getItem('sc_symlim') === '1';
 async function quoteOne(sym) {
   const d = await getJson(`${BS}/quote?symbol=${encodeURIComponent(sym)}`);
@@ -754,13 +764,16 @@ async function poll() {
       const prev = lastPrice[q.symbol];
       return { ...q, surge, tier:tierOf(surge, q.price, prev) };
     });
-    let ring = false; const fresh = [];
+    let ring = false; const nowMs = Date.now();
     rows.forEach(r => {
-      if (r.tier === 'sniper' && lastTier[r.symbol] !== 'sniper') { ring = true; fresh.push(r); }
+      if (lastPrice[r.symbol] !== r.price || !pxAt[r.symbol]) pxAt[r.symbol] = nowMs;
+      r.stale = Math.round((nowMs - pxAt[r.symbol]) / 1000);
+      if (r.tier === 'sniper' && lastTier[r.symbol] !== 'sniper') ring = true;
       lastTier[r.symbol] = r.tier; lastPrice[r.symbol] = r.price;
     });
     if (ring) beep();
-    try { journalTrack(rows, fresh); } catch (e) {}
+    dbgUpdate(rows, '');
+    try { journalTrack(rows, []); } catch (e) { console.error(e); dbgUpdate([], '记录出错：' + e.message); }
     lastRows = rows; render(rows);
     setLive(true, etParts().str + ' · ' + rows.length);
   } catch (e) {
@@ -770,7 +783,7 @@ async function poll() {
 }
 function startRadar() {
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
-  lastPrice = {}; lastTier = {}; openCache = {}; seenPx = {}; prevCache = {}; tickN = 0; rrN = 0;
+  lastPrice = {}; lastTier = {}; openCache = {}; seenPx = {}; prevCache = {}; pxAt = {}; tickN = 0; rrN = 0;
   const b = $('btnRadar'); b.textContent = '■ 停止雷达'; b.className = 'btn btn-stop text-base';
   setLive(true, '连接中');
   const ms = symLimited() ? 6000 : freeMode() ? 8000 : 3000;
@@ -809,7 +822,7 @@ function render(rows) {
         <button data-act="rm" data-v="${r.symbol}" class="text-slate-500 hover:text-rose-400 text-lg leading-none px-1">×</button>
       </div>
       <div class="flex items-end justify-between mt-3">
-        <div class="text-3xl font-semibold num">$${f2(p)}</div>
+        <div class="text-3xl font-semibold num">$${f2(p)}${r.stale >= 45 ? `<div class="text-[10px] font-normal text-amber-300">⏸ ${r.stale} 秒价格未变</div>` : ''}</div>
         <div class="text-right"><div class="text-[11px] text-slate-500 num">O ${f2(r.open)}</div><div class="text-xl font-bold num ${sc}">${r.surge >= 0 ? '+' : ''}${f2(r.surge)}%</div></div>
       </div>
       <div class="relative h-1.5 rounded-full bg-white/10 mt-3">
@@ -925,12 +938,13 @@ function previewOf(sym) {
 function journalTrack(rows, fresh) {
   const J = jLoad(), today = etDate(), p = etParts(), t = p.h * 60 + p.m; let ch = false;
   const byS = {}; rows.forEach(r => byS[r.symbol] = r);
-  fresh.forEach(r => {
-    if (t < 573 || t > 582) return;
+  rows.forEach(r => {
+    if (!(r.price > 0) || r.surge < 2.5) return;
+    if (t < 573 || t > 584) return;
     if (J.some(x => x.date === today && x.sym === r.symbol)) return;
-    const pv = previewOf(r.symbol);
+    const pv = previewOf(r.symbol), kind = r.tier === 'sniper' ? 'sniper' : (r.surge > 4.8 ? 'jump' : 'flat');
     J.push({ id:Date.now() + r.symbol, date:today, sym:r.symbol, t:p.str, sigPx:r.price, entry:r.price * 1.003, tp:r.price * 1.07, sl:r.price * 0.97,
-      open:r.open, surge:r.surge, gap:r.prevClose > 0 ? (r.open / r.prevClose - 1) * 100 : null,
+      open:r.open, surge:r.surge, kind, gap:r.prevClose > 0 ? (r.open / r.prevClose - 1) * 100 : null,
       cap:r.marketCap || pv.cap || 0, chg:pv.chg || null, rvol:pv.rvol || 0, fb:FALLBACK.includes(r.symbol),
       status:'open', exit:null, hi:r.price, lo:r.price, last:r.price, actual:null });
     ch = true;
@@ -968,6 +982,7 @@ const DIMS = [
   { name:'开盘跳空', f:r => r.gap, b:[['< 3%', v => v < 3], ['3–10%', v => v < 10], ['10–25%', v => v < 25], ['> 25%', v => true]] },
   { name:'选股时涨幅', f:r => r.chg || null, b:[['< 10%', v => v < 10], ['10–25%', v => v < 25], ['> 25%', v => true]] },
   { name:'选股时相对量', f:r => r.rvol || null, b:[['< 1.2×', v => v < 1.2], ['1.2–2×', v => v < 2], ['> 2×', v => true]] },
+  { name:'信号类型', f:r => r.kind === 'flat' ? 1 : r.kind === 'jump' ? 2 : 0, b:[['狙击（涨幅2.5–4.8%且创新高）', v => v === 0], ['未创新高', v => v === 1], ['已冲高 >4.8%', v => true]] },
   { name:'来源', f:r => r.fb ? 1 : 0, b:[['筛选池', v => v === 0], ['保底池', v => true]] }
 ];
 function analyze(closed) {
@@ -1010,14 +1025,18 @@ function renderJournal() {
   $('tabSym').className = 'btn text-sm ' + (logTab === 'sym' ? 'btn-violet' : 'btn-ghost');
   $('tabRec').className = 'btn text-sm ' + (logTab === 'rec' ? 'btn-violet' : 'btn-ghost');
   const body = $('logBody');
-  if (!J.length) { body.innerHTML = '<div class="text-slate-400 leading-relaxed">还没有记录。雷达运行时，每出现一次狙击信号会自动记录并模拟结果，积累后这里会显示各条件的胜率和盈亏比。</div>'; return; }
+  const dg = dbgLoad(), nToday = J.filter(x => x.date === etDate()).length;
+  const dgHtml = `<div class="rounded-2xl bg-white/5 border border-white/10 px-4 py-3 text-xs leading-relaxed text-slate-400">
+    今日雷达：${dg.polls ? `启动 ${dg.start} ET · 刷新 ${dg.polls} 次 · 最近 ${dg.last} · 有数据 ${dg.n} 只<br>最高涨幅 ${dg.sym || '—'} ${dg.polls ? fmtP(dg.max, 2) : ''}${dg.max < 2.5 && dg.polls ? '（未达 +2.5% 门槛，所以没有记录）' : ''}` : '今天还没有运行'}
+    <br>今日已记录 ${nToday} 笔${dg.start && dg.start > '09:33:00' ? '<br><span class="text-amber-300">雷达启动晚于 09:33 ET，基准价偏高，涨幅会被低估</span>' : ''}${dg.err ? `<br><span class="text-rose-400">${dg.err}</span>` : ''}</div>`;
+  if (!J.length) { body.innerHTML = dgHtml + '<div class="text-slate-400 leading-relaxed">还没有记录。雷达运行时，每出现一次狙击信号会自动记录并模拟结果，积累后这里会显示各条件的胜率和盈亏比。</div>'; return; }
   if (logTab === 'rec') {
-    body.innerHTML = [...J].reverse().map(x => {
+    body.innerHTML = dgHtml + [...J].reverse().map(x => {
       const pp = pnlPct(x), col = x.status === 'open' ? 'bg-white/10 text-slate-300' : pp > 0 ? 'bg-emerald-400 text-black' : 'bg-rose-400 text-black';
       const lab = { open:'进行中', TP:'止盈', SL:'止损', TIME:'到时' }[x.status];
       return `<div class="rounded-xl bg-black/25 px-3 py-2 flex items-center gap-2">
         <div class="flex-1 min-w-0"><div><b>${x.sym}</b> <span class="text-xs text-slate-500">${x.date} ${x.t}</span></div>
-        <div class="text-xs text-slate-400 num">入 ${f2(x.entry)} → ${x.exit ? '出 ' + f2(x.exit) : '最新 ' + f2(x.last)} · 信号涨幅 ${f2(x.surge)}%${x.actual != null ? ' · 实际' : ''}</div></div>
+        <div class="text-xs text-slate-400 num">入 ${f2(x.entry)} → ${x.exit ? '出 ' + f2(x.exit) : '最新 ' + f2(x.last)} · 信号涨幅 ${f2(x.surge)}%${x.kind === 'flat' ? ' · 未创新高' : x.kind === 'jump' ? ' · 已冲高' : ''}${x.actual != null ? ' · 实际' : ''}</div></div>
         <span class="px-2 py-0.5 rounded-full text-[11px] font-bold ${col}">${lab}${pp != null ? ' ' + fmtP(pp) : ''}</span>
         <button data-jact="act" data-id="${x.id}" class="text-slate-400 hover:text-white px-1" title="填写实际盈亏">✎</button>
         <button data-jact="del" data-id="${x.id}" class="text-slate-500 hover:text-rose-400 px-1">×</button></div>`;
@@ -1038,7 +1057,7 @@ function renderJournal() {
   }
   const all = summarize(closed), A = analyze(closed);
   const cell = (s, best) => s.n ? `<span class="num">${s.win.toFixed(0)}%</span><span class="num">${isFinite(s.payoff) ? s.payoff.toFixed(2) : '∞'}</span><span class="num ${s.exp >= 0 ? 'text-emerald-300' : 'text-rose-400'}">${fmtP(s.exp, 2)}</span>` : '<span>—</span><span>—</span><span>—</span>';
-  let h = `<div class="rounded-2xl bg-white/5 border border-white/10 p-4 space-y-2">
+  let h = dgHtml + `<div class="rounded-2xl bg-white/5 border border-white/10 p-4 space-y-2">
     <div class="flex items-center justify-between"><span class="text-slate-400">总览</span><span class="num text-xs text-slate-500">已完成 ${closed.length} 笔${open ? ' · 进行中 ' + open : ''}</span></div>
     ${all.n ? `<div class="grid grid-cols-4 gap-2 text-center">
       <div><div class="text-[10px] text-slate-500">胜率</div><div class="font-bold num">${all.win.toFixed(0)}%</div></div>
